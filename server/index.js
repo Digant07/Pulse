@@ -100,7 +100,7 @@ app.get('/api/auth/callback', async (req, res) => {
 // 2. GITHUB REPOSITORY ENDPOINTS
 app.get('/api/github/repos', async (req, res) => {
   const token = req.headers.authorization?.split(' ')[1];
-  
+
   if (!token) {
     return res.status(401).json({ error: 'Unauthorized: GitHub access token is required.' });
   }
@@ -203,7 +203,7 @@ app.post('/api/projects', (req, res) => {
   }
 
   const db = readDb();
-  
+
   // Check if project name exists
   const existingProject = db.projects.find(p => p.name.toLowerCase() === name.toLowerCase());
   if (existingProject) {
@@ -245,7 +245,7 @@ app.get('/api/projects/:id', (req, res) => {
   if (!project) {
     return res.status(404).json({ error: 'Project not found.' });
   }
-  
+
   const deployments = db.deployments.filter(d => d.projectId === id);
   res.json({ project, deployments });
 });
@@ -267,7 +267,7 @@ app.post('/api/projects/:id/redeploy', (req, res) => {
 app.delete('/api/projects/:id', (req, res) => {
   const { id } = req.params;
   const db = readDb();
-  
+
   const projectIndex = db.projects.findIndex(p => p.id === id);
   if (projectIndex === -1) {
     return res.status(404).json({ error: 'Project not found.' });
@@ -286,7 +286,7 @@ app.delete('/api/projects/:id', (req, res) => {
 // SSE Log Stream Route
 app.get('/api/deployments/:id/logs', (req, res) => {
   const { id } = req.params;
-  
+
   // Set headers for Server-Sent Events (SSE)
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -331,11 +331,11 @@ app.get('/api/deployments/:id/logs', (req, res) => {
   });
 });
 
-// 4. DEPLOYMENT BUILD PIPELINE SIMULATOR
+// 4. DEPLOYMENT BUILD PIPELINE
 function triggerDeployment(project) {
   const db = readDb();
   const deploymentId = uuidv4();
-  
+
   const deployment = {
     id: deploymentId,
     projectId: project.id,
@@ -347,9 +347,16 @@ function triggerDeployment(project) {
   db.deployments.push(deployment);
   writeDb(db);
 
+  // Initialize empty log buffer for this deployment
+  activeLogs[deploymentId] = [];
+
   // Trigger AWS Orchestrator Lambda to initiate CodeBuild
   const orchestratorUrl = process.env.ORCHESTRATOR_URL || 'https://5a7qmkoqm5.execute-api.ap-south-1.amazonaws.com/prod/orchestrate';
+  const BACKEND_URL = process.env.BACKEND_URL || `http://localhost:${PORT}`;
+  const callbackUrl = `${BACKEND_URL}/api/deployments/${deploymentId}/callback`;
+
   console.log(`[Orchestrator] Invoking Lambda at ${orchestratorUrl} for project ${project.name}`);
+  console.log(`[Orchestrator] Callback URL: ${callbackUrl}`);
 
   const payload = {
     projectId: project.id,
@@ -361,164 +368,119 @@ function triggerDeployment(project) {
     buildCommand: project.buildCommand,
     outputDirectory: project.outputDirectory,
     env: project.env,
-    url: project.url
+    url: project.url,
+    callbackUrl: callbackUrl   // Lambda uses this to POST real status/logs back
   };
-  console.log(`[Orchestrator] Payload:`, JSON.stringify(payload));
+
+  // Emit an initial "queued" log so the UI is not blank
+  const queuedLog = `[${new Date().toISOString().split('T')[1].slice(0, -1)}] ⏳ Deployment queued. Waiting for AWS CodeBuild to pick up the job...`;
+  activeLogs[deploymentId].push(queuedLog);
 
   axios.post(orchestratorUrl, payload, {
     headers: { 'Content-Type': 'application/json' },
     timeout: 15000
   })
-  .then(response => {
-    console.log(`[Orchestrator] ✅ Lambda triggered successfully. HTTP ${response.status}`, JSON.stringify(response.data));
-  })
-  .catch(err => {
-    if (err.response) {
-      // The server responded with an error status
-      console.error(`[Orchestrator] ❌ Lambda call failed. HTTP ${err.response.status}:`, JSON.stringify(err.response.data));
-    } else if (err.request) {
-      // No response received at all
-      console.error(`[Orchestrator] ❌ No response from Lambda (timeout or network issue): ${err.message}`);
-    } else {
-      console.error(`[Orchestrator] ❌ Error setting up Lambda request: ${err.message}`);
-    }
-  });
+    .then(response => {
+      console.log(`[Orchestrator] ✅ Lambda triggered successfully. HTTP ${response.status}`, JSON.stringify(response.data));
 
-  // Launch simulated builder thread in background to keep UI interactive
-  runBuildSimulation(project, deployment);
+      // Add a log confirming Lambda was triggered
+      const triggeredLog = `[${new Date().toISOString().split('T')[1].slice(0, -1)}] 🚀 Build job dispatched to AWS CodeBuild. Streaming real-time logs below...`;
+      activeLogs[deploymentId].push(triggeredLog);
+      if (activeListeners[deploymentId]) {
+        activeListeners[deploymentId].forEach(listener => {
+          listener.write(`data: ${JSON.stringify({ log: triggeredLog })}\\n\\n`);
+        });
+      }
+    })
+    .catch(err => {
+      let errorMsg = '';
+      if (err.response) {
+        errorMsg = `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}`;
+        console.error(`[Orchestrator] ❌ Lambda call failed. ${errorMsg}`);
+      } else if (err.request) {
+        errorMsg = `No response (timeout or network issue): ${err.message}`;
+        console.error(`[Orchestrator] ❌ ${errorMsg}`);
+      } else {
+        errorMsg = err.message;
+        console.error(`[Orchestrator] ❌ Error setting up Lambda request: ${errorMsg}`);
+      }
+
+      // Update status to FAILED and notify SSE listeners
+      const failLog = `[${new Date().toISOString().split('T')[1].slice(0, -1)}] ❌ Failed to trigger build: ${errorMsg}`;
+      activeLogs[deploymentId].push(failLog);
+      if (activeListeners[deploymentId]) {
+        activeListeners[deploymentId].forEach(listener => {
+          listener.write(`data: ${JSON.stringify({ log: failLog })}\\n\\n`);
+          listener.write(`data: ${JSON.stringify({ status: 'FAILED' })}\\n\\n`);
+        });
+      }
+
+      // Persist FAILED status to DB
+      const failDb = readDb();
+      const dIdx = failDb.deployments.findIndex(d => d.id === deploymentId);
+      if (dIdx !== -1) failDb.deployments[dIdx].status = 'FAILED';
+      const pIdx = failDb.projects.findIndex(p => p.id === project.id);
+      if (pIdx !== -1) failDb.projects[pIdx].status = 'FAILED';
+      writeDb(failDb);
+    });
 
   return deployment;
 }
 
-function runBuildSimulation(project, deployment) {
-  const depId = deployment.id;
-  activeLogs[depId] = [];
-  
-  const addLog = (message) => {
-    const timestamp = new Date().toISOString().split('T')[1].slice(0, -1);
-    const logLine = `[${timestamp}] ${message}`;
-    activeLogs[depId].push(logLine);
-    
-    // Broadcast log to all SSE listeners
-    if (activeListeners[depId]) {
-      activeListeners[depId].forEach(listener => {
-        listener.write(`data: ${JSON.stringify({ log: logLine })}\n\n`);
+// 5. REAL-TIME CALLBACK ENDPOINT — called by Lambda/CodeBuild to push real logs & status
+// Expected POST body: { status?: string, log?: string, logs?: string[] }
+app.post('/api/deployments/:id/callback', (req, res) => {
+  const { id } = req.params;
+  const { status, log, logs } = req.body;
+
+  console.log(`[Callback] Received update for deployment ${id}: status=${status}, logs=${logs ? logs.length : log ? 1 : 0} lines`);
+
+  if (!activeLogs[id]) {
+    activeLogs[id] = [];
+  }
+
+  // Accept a single log line OR an array of log lines
+  const logLines = logs || (log ? [log] : []);
+
+  logLines.forEach(line => {
+    activeLogs[id].push(line);
+    if (activeListeners[id]) {
+      activeListeners[id].forEach(listener => {
+        listener.write(`data: ${JSON.stringify({ log: line })}\\n\\n`);
       });
     }
-  };
+  });
 
-  const updateDbStatus = (status) => {
+  // Update status in DB and broadcast to SSE listeners
+  if (status) {
     const db = readDb();
-    const dIndex = db.deployments.findIndex(d => d.id === depId);
-    if (dIndex !== -1) {
-      db.deployments[dIndex].status = status;
+    const dIdx = db.deployments.findIndex(d => d.id === id);
+    if (dIdx !== -1) {
+      db.deployments[dIdx].status = status;
+      // Also update parent project status
+      const pIdx = db.projects.findIndex(p => p.id === db.deployments[dIdx].projectId);
+      if (pIdx !== -1) db.projects[pIdx].status = status;
     }
-    
-    // Update parent project status as well
-    const pIndex = db.projects.findIndex(p => p.id === project.id);
-    if (pIndex !== -1) {
-      db.projects[pIndex].status = status;
-    }
-    
     writeDb(db);
 
-    // Broadcast status to SSE listeners
-    if (activeListeners[depId]) {
-      activeListeners[depId].forEach(listener => {
-        listener.write(`data: ${JSON.stringify({ status })}\n\n`);
+    if (activeListeners[id]) {
+      activeListeners[id].forEach(listener => {
+        listener.write(`data: ${JSON.stringify({ status })}\\n\\n`);
       });
     }
-  };
 
-  // Compile specific steps based on frameworks
-  const steps = [];
-  steps.push({ delay: 500, log: '✨ Pluse Build Pipeline initiated...' });
-  steps.push({ delay: 600, log: `📦 Pulling source code from Git repository: https://github.com/${project.repository}.git` });
-  steps.push({ delay: 700, log: `🔱 Checking out branch: [${project.branch}]` });
-  steps.push({ delay: 400, log: `✔ Successfully fetched commit hash: ${Math.random().toString(36).substring(2, 9)} (Latest HEAD)` });
-  steps.push({ delay: 800, log: `⚙ Environment configuration loaded. (${project.env.length} secret variables injected)` });
-  
-  if (project.env && project.env.length > 0) {
-    project.env.forEach(e => {
-      steps.push({ delay: 100, log: `  ↳ Injected variable: ${e.key}=******` });
-    });
+    // Close SSE connections when build is done
+    if (status === 'READY' || status === 'FAILED') {
+      if (activeListeners[id]) {
+        activeListeners[id].forEach(listener => listener.end());
+        delete activeListeners[id];
+      }
+    }
   }
 
-  steps.push({ delay: 1000, log: `⚡ Running setup: Installing node modules using npm...` });
-  steps.push({ delay: 1200, log: `  ↳ npm WARN config global \`--global\`, \`--local\` are deprecated. Use \`--location=global\` instead.` });
-  steps.push({ delay: 1500, log: `  ↳ Installed 482 packages in 3.42s (compiled lockfile resolved successfully)` });
-  
-  steps.push({ delay: 600, log: `🚀 Initiating compilation stage using framework preset [${project.framework.toUpperCase()}]` });
-  steps.push({ delay: 800, log: `  ↳ Running script: "${project.buildCommand}"` });
+  res.json({ ok: true });
+});
 
-  // Framework logs
-  if (project.framework === 'next') {
-    steps.push({ delay: 1000, log: `    ▲ Next.js 14.2.3` });
-    steps.push({ delay: 800, log: `    - Creating an optimized production build ...` });
-    steps.push({ delay: 1200, log: `    - Compiled client and server components successfully` });
-    steps.push({ delay: 900, log: `    - Linting and checking validity of types ...` });
-    steps.push({ delay: 800, log: `    - Collecting page data ...` });
-    steps.push({ delay: 1100, log: `    - Generating static pages (5/5) ...` });
-    steps.push({ delay: 600, log: `    - Finalizing page optimization ...` });
-    steps.push({ delay: 400, log: `\n    Route (app)                              Size     First Load JS` });
-    steps.push({ delay: 100, log: `    ┌ Accessing server-side resources       0 B      0 B` });
-    steps.push({ delay: 100, log: `    └ /                                      5.12 kB  87.2 kB` });
-    steps.push({ delay: 100, log: `    + First Load JS shared by all            82.1 kB` });
-  } else if (project.framework === 'vite' || project.framework === 'react') {
-    steps.push({ delay: 900, log: `    vite v5.2.11 building for production...` });
-    steps.push({ delay: 1000, log: `    transforming...` });
-    steps.push({ delay: 700, log: `    ✓ 381 modules transformed.` });
-    steps.push({ delay: 800, log: `    rendering chunks...` });
-    steps.push({ delay: 400, log: `    computing bundle sizes...` });
-    steps.push({ delay: 200, log: `    ${project.outputDirectory}/assets/index-D7hG9a7b.css   12.40 kB │ gzip:  3.12 kB` });
-    steps.push({ delay: 200, log: `    ${project.outputDirectory}/assets/index-B5xR2g8h.js   128.51 kB │ gzip: 42.10 kB` });
-    steps.push({ delay: 300, log: `    ✓ built in 2.12s` });
-  } else if (project.framework === 'vue') {
-    steps.push({ delay: 1000, log: `    vue-cli-service build --mode production` });
-    steps.push({ delay: 800, log: `    Building for production...` });
-    steps.push({ delay: 1200, log: `    Building bundle for production...` });
-    steps.push({ delay: 700, log: `    DONE  Build complete. The ${project.outputDirectory} directory is ready to be deployed.` });
-  } else if (project.framework === 'svelte') {
-    steps.push({ delay: 1000, log: `    svelte-kit build` });
-    steps.push({ delay: 800, log: `    vite v5.2.11 building for production...` });
-    steps.push({ delay: 900, log: `    svelte-kit adapter compilation...` });
-    steps.push({ delay: 600, log: `    ✔ Created production bundle in ${project.outputDirectory}` });
-  } else {
-    // Static
-    steps.push({ delay: 500, log: `    Processing static deployment files...` });
-    steps.push({ delay: 500, log: `    Directory layout validated. Found: index.html, assets/` });
-  }
-
-  steps.push({ delay: 1000, log: `\n🌐 [API Gateway Router] Routing setup initiated...` });
-  steps.push({ delay: 800, log: `  ↳ Provisioning ingress proxy rule: HTTP redirection target -> ${project.url}` });
-  steps.push({ delay: 700, log: `  ↳ Uploading compiled builds into Pluse Edge Server Cache...` });
-  steps.push({ delay: 600, log: `  ↳ Provisioning Let's Encrypt SSL Certificates for SSL negotiation...` });
-  steps.push({ delay: 800, log: `  ↳ Active CDN propagation: US-East, EU-Central, AP-South...` });
-  steps.push({ delay: 700, log: `✔ Global DNS setup complete. Routing active.` });
-  steps.push({ delay: 500, log: `\n🎉 Deployment succeeded. App is online!` });
-
-  // Sequenced runner
-  let totalDelay = 0;
-  
-  setTimeout(() => {
-    updateDbStatus('BUILDING');
-  }, 100);
-
-  steps.forEach((step, index) => {
-    totalDelay += step.delay;
-    setTimeout(() => {
-      addLog(step.log);
-      
-      if (step.log.includes('Routing setup initiated')) {
-        updateDbStatus('DEPLOYING');
-      }
-
-      if (index === steps.length - 1) {
-        updateDbStatus('READY');
-      }
-    }, totalDelay);
-  });
-}
 
 function getDefaultBuildCommand(framework) {
   switch (framework) {
@@ -542,86 +504,11 @@ function getDefaultOutputDir(framework) {
   }
 }
 
-function generateStaticLogs(project) {
-  const steps = [];
-  const baseTime = new Date(project.createdAt || new Date());
-  
-  const formatTime = (date) => {
-    return date.toISOString().split('T')[1].slice(0, -1);
-  };
-
-  let logTime = new Date(baseTime.getTime());
-  const addLog = (message, secondsOffset) => {
-    logTime = new Date(logTime.getTime() + secondsOffset * 1000);
-    steps.push(`[${formatTime(logTime)}] ${message}`);
-  };
-
-  addLog('✨ Pluse Build Pipeline initiated...', 0.5);
-  addLog(`📦 Pulling source code from Git repository: https://github.com/${project.repository}.git`, 0.6);
-  addLog(`🔱 Checking out branch: [${project.branch}]`, 0.7);
-  addLog(`✔ Successfully fetched commit hash: ${Math.random().toString(36).substring(2, 9).toUpperCase()} (Latest HEAD)`, 0.4);
-  addLog(`⚙ Environment configuration loaded. (${project.env.length} secret variables injected)`, 0.8);
-  
-  if (project.env && project.env.length > 0) {
-    project.env.forEach(e => {
-      addLog(`  ↳ Injected variable: ${e.key}=******`, 0.1);
-    });
-  }
-
-  addLog(`⚡ Running setup: Installing node modules using npm...`, 1.0);
-  addLog(`  ↳ npm WARN config global \`--global\`, \`--local\` are deprecated. Use \`--location=global\` instead.`, 1.2);
-  addLog(`  ↳ Installed 482 packages in 3.42s (compiled lockfile resolved successfully)`, 1.5);
-  addLog(`🚀 Initiating compilation stage using framework preset [${project.framework.toUpperCase()}]`, 0.6);
-  addLog(`  ↳ Running script: "${project.buildCommand}"`, 0.8);
-
-  if (project.framework === 'next') {
-    addLog(`    ▲ Next.js 14.2.3`, 1.0);
-    addLog(`    - Creating an optimized production build ...`, 0.8);
-    addLog(`    - Compiled client and server components successfully`, 1.2);
-    addLog(`    - Linting and checking validity of types ...`, 0.9);
-    addLog(`    - Collecting page data ...`, 0.8);
-    addLog(`    - Generating static pages (5/5) ...`, 1.1);
-    addLog(`    - Finalizing page optimization ...`, 0.6);
-    addLog(`\n    Route (app)                              Size     First Load JS`, 0.4);
-    addLog(`    ┌ Accessing server-side resources       0 B      0 B`, 0.1);
-    addLog(`    └ /                                      5.12 kB  87.2 kB`, 0.1);
-    addLog(`    + First Load JS shared by all            82.1 kB`, 0.1);
-  } else if (project.framework === 'vite' || project.framework === 'react') {
-    addLog(`    vite v5.2.11 building for production...`, 0.9);
-    addLog(`    transforming...`, 1.0);
-    addLog(`    ✓ 381 modules transformed.`, 0.7);
-    addLog(`    rendering chunks...`, 0.8);
-    addLog(`    computing bundle sizes...`, 0.4);
-    addLog(`    ${project.outputDirectory}/assets/index-D7hG9a7b.css   12.40 kB │ gzip:  3.12 kB`, 0.2);
-    addLog(`    ${project.outputDirectory}/assets/index-B5xR2g8h.js   128.51 kB │ gzip: 42.10 kB`, 0.2);
-    addLog(`    ✓ built in 2.12s`, 0.3);
-  } else if (project.framework === 'vue') {
-    addLog(`    vue-cli-service build --mode production`, 1.0);
-    addLog(`    Building for production...`, 0.8);
-    addLog(`    Building bundle for production...`, 1.2);
-    addLog(`    DONE  Build complete. The ${project.outputDirectory} directory is ready to be deployed.`, 0.7);
-  } else if (project.framework === 'svelte') {
-    addLog(`    svelte-kit build`, 1.0);
-    addLog(`    vite v5.2.11 building for production...`, 0.8);
-    addLog(`    svelte-kit adapter compilation...`, 0.9);
-    addLog(`    ✔ Created production bundle in ${project.outputDirectory}`, 0.6);
-  } else {
-    addLog(`    Processing static deployment files...`, 0.5);
-    addLog(`    Directory layout validated. Found: index.html, assets/`, 0.5);
-  }
-
-  addLog(`\n🌐 [API Gateway Router] Routing setup initiated...`, 1.0);
-  addLog(`  ↳ Provisioning ingress proxy rule: HTTP redirection target -> ${project.url}`, 0.8);
-  addLog(`  ↳ Uploading compiled builds into Pluse Edge Server Cache...`, 0.7);
-  addLog(`  ↳ Provisioning Let's Encrypt SSL Certificates for SSL negotiation...`, 0.6);
-  addLog(`  ↳ Active CDN propagation: US-East, EU-Central, AP-South...`, 0.8);
-  addLog(`✔ Global DNS setup complete. Routing active.`, 0.7);
-  addLog(`\n🎉 Deployment succeeded. App is online!`, 0.5);
-
-  return steps;
-}
-
 // Start Server
 app.listen(PORT, () => {
-  console.log(`🚀 Pluse Gateway and Server running on http://localhost:${PORT}`);
+  console.log(`🚀 Pluse Gateway and Server running on port ${PORT}`);
+  console.log(`   FRONTEND_URL  : ${process.env.FRONTEND_URL || '(not set, defaulting to localhost:5173)'}`);
+  console.log(`   BACKEND_URL   : ${process.env.BACKEND_URL || '(not set, defaulting to localhost:' + PORT + ')'}`);
+  console.log(`   ORCHESTRATOR  : ${process.env.ORCHESTRATOR_URL || '(not set, using hardcoded fallback)'}`);
+  console.log(`   GITHUB_CLIENT : ${process.env.GITHUB_CLIENT_ID ? process.env.GITHUB_CLIENT_ID.substring(0,6) + '...' : '(not set)'}`);
 });
