@@ -350,8 +350,8 @@ function triggerDeployment(project) {
   // Trigger AWS Orchestrator Lambda to initiate CodeBuild
   const orchestratorUrl = process.env.ORCHESTRATOR_URL || 'https://5a7qmkoqm5.execute-api.ap-south-1.amazonaws.com/prod/orchestrate';
   console.log(`[Orchestrator] Invoking Lambda at ${orchestratorUrl} for project ${project.name}`);
-  
-  axios.post(orchestratorUrl, {
+
+  const payload = {
     projectId: project.id,
     deploymentId: deploymentId,
     name: project.name,
@@ -362,12 +362,26 @@ function triggerDeployment(project) {
     outputDirectory: project.outputDirectory,
     env: project.env,
     url: project.url
+  };
+  console.log(`[Orchestrator] Payload:`, JSON.stringify(payload));
+
+  axios.post(orchestratorUrl, payload, {
+    headers: { 'Content-Type': 'application/json' },
+    timeout: 15000
   })
   .then(response => {
-    console.log(`[Orchestrator] Lambda triggered successfully. Status: ${response.status}`, response.data);
+    console.log(`[Orchestrator] ✅ Lambda triggered successfully. HTTP ${response.status}`, JSON.stringify(response.data));
   })
   .catch(err => {
-    console.error(`[Orchestrator] Failed to trigger Lambda: ${err.message}`);
+    if (err.response) {
+      // The server responded with an error status
+      console.error(`[Orchestrator] ❌ Lambda call failed. HTTP ${err.response.status}:`, JSON.stringify(err.response.data));
+    } else if (err.request) {
+      // No response received at all
+      console.error(`[Orchestrator] ❌ No response from Lambda (timeout or network issue): ${err.message}`);
+    } else {
+      console.error(`[Orchestrator] ❌ Error setting up Lambda request: ${err.message}`);
+    }
   });
 
   // Launch simulated builder thread in background to keep UI interactive
