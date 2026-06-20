@@ -388,7 +388,9 @@ function triggerDeployment(project) {
       activeLogs[deploymentId].push(triggeredLog);
       if (activeListeners[deploymentId]) {
         activeListeners[deploymentId].forEach(listener => {
-          listener.write(`data: ${JSON.stringify({ log: triggeredLog })}\\n\\n`);
+          listener.write(`data: ${JSON.stringify({ log: triggeredLog })}
+
+`);
         });
       }
     })
@@ -410,8 +412,12 @@ function triggerDeployment(project) {
       activeLogs[deploymentId].push(failLog);
       if (activeListeners[deploymentId]) {
         activeListeners[deploymentId].forEach(listener => {
-          listener.write(`data: ${JSON.stringify({ log: failLog })}\\n\\n`);
-          listener.write(`data: ${JSON.stringify({ status: 'FAILED' })}\\n\\n`);
+          listener.write(`data: ${JSON.stringify({ log: failLog })}
+
+`);
+          listener.write(`data: ${JSON.stringify({ status: 'FAILED' })}
+
+`);
         });
       }
 
@@ -446,7 +452,9 @@ app.post('/api/deployments/:id/callback', (req, res) => {
     activeLogs[id].push(line);
     if (activeListeners[id]) {
       activeListeners[id].forEach(listener => {
-        listener.write(`data: ${JSON.stringify({ log: line })}\\n\\n`);
+        listener.write(`data: ${JSON.stringify({ log: line })}
+
+`);
       });
     }
   });
@@ -465,7 +473,9 @@ app.post('/api/deployments/:id/callback', (req, res) => {
 
     if (activeListeners[id]) {
       activeListeners[id].forEach(listener => {
-        listener.write(`data: ${JSON.stringify({ status })}\\n\\n`);
+        listener.write(`data: ${JSON.stringify({ status })}
+
+`);
       });
     }
 
