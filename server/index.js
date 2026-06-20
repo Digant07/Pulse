@@ -40,18 +40,22 @@ const CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
 
 // 1. AUTH ENDPOINTS
 app.get('/api/auth/github', (req, res) => {
+  const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const BACKEND_URL = process.env.BACKEND_URL || `http://localhost:${PORT}`;
+
   if (!CLIENT_ID || !CLIENT_SECRET) {
-    return res.redirect('http://localhost:5173/?auth_error=' + encodeURIComponent('GitHub OAuth is not configured on the server. Please add GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET keys to your .env file in the project root and restart the server, or use Sandbox Mode / Personal Access Token.'));
+    return res.redirect(`${FRONTEND_URL}/?auth_error=` + encodeURIComponent('GitHub OAuth is not configured on the server. Please add GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET keys to your .env file in the project root and restart the server, or use Sandbox Mode / Personal Access Token.'));
   }
-  const redirectUri = `http://localhost:${PORT}/api/auth/callback`;
+  const redirectUri = `${BACKEND_URL}/api/auth/callback`;
   const githubUrl = `https://github.com/login/oauth/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=repo,user`;
   res.redirect(githubUrl);
 });
 
 app.get('/api/auth/callback', async (req, res) => {
+  const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
   const { code } = req.query;
   if (!code) {
-    return res.redirect('http://localhost:5173/?auth_error=No+code+provided+from+GitHub');
+    return res.redirect(`${FRONTEND_URL}/?auth_error=No+code+provided+from+GitHub`);
   }
 
   try {
@@ -67,7 +71,7 @@ app.get('/api/auth/callback', async (req, res) => {
 
     const { access_token, error, error_description } = tokenResponse.data;
     if (error) {
-      return res.redirect(`http://localhost:5173/?auth_error=${encodeURIComponent(error_description || error)}`);
+      return res.redirect(`${FRONTEND_URL}/?auth_error=${encodeURIComponent(error_description || error)}`);
     }
 
     // Fetch user profile info
@@ -86,10 +90,10 @@ app.get('/api/auth/callback', async (req, res) => {
       token: access_token
     };
 
-    res.redirect(`http://localhost:5173/?auth_success=true&token=${user.token}&login=${user.login}&name=${encodeURIComponent(user.name)}&avatar=${user.avatar_url}`);
+    res.redirect(`${FRONTEND_URL}/?auth_success=true&token=${user.token}&login=${user.login}&name=${encodeURIComponent(user.name)}&avatar=${user.avatar_url}`);
   } catch (err) {
     console.error('OAuth Callback Error:', err.message);
-    res.redirect(`http://localhost:5173/?auth_error=${encodeURIComponent(err.message)}`);
+    res.redirect(`${FRONTEND_URL}/?auth_error=${encodeURIComponent(err.message)}`);
   }
 });
 

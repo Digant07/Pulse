@@ -1,10 +1,11 @@
 import React from 'react';
 import { AlertCircle } from 'lucide-react';
+import { API_BASE_URL } from '../config';
 
 export const Login: React.FC = () => {
   const handleOAuthLogin = () => {
     // Redirect to backend OAuth initiator
-    window.location.href = 'http://localhost:3001/api/auth/github';
+    window.location.href = `${API_BASE_URL}/api/auth/github`;
   };
 
   // Get URL parameters to display any login errors

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, ChevronDown, ChevronUp, Plus, Trash2, GitBranch, Shield, Eye, EyeOff } from 'lucide-react';
+import { API_BASE_URL } from '../config';
 
 interface Repo {
   id: number;
@@ -39,7 +40,7 @@ export const ConfigureProject: React.FC<ConfigureProjectProps> = ({ repo, token,
     const detectFramework = async () => {
       setLoadingDetection(true);
       try {
-        const response = await fetch(`http://localhost:3001/api/github/repos/${repo.owner.login}/${repo.name}/framework`, {
+        const response = await fetch(`${API_BASE_URL}/api/github/repos/${repo.owner.login}/${repo.name}/framework`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         const data = await response.json();
@@ -128,7 +129,7 @@ export const ConfigureProject: React.FC<ConfigureProjectProps> = ({ repo, token,
     const cleanEnv = envVars.filter(ev => ev.key.trim() !== '');
 
     try {
-      const response = await fetch('http://localhost:3001/api/projects', {
+      const response = await fetch(`${API_BASE_URL}/api/projects`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

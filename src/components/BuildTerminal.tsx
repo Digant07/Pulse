@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, Terminal as TerminalIcon, ExternalLink, RefreshCw, XCircle } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { API_BASE_URL } from '../config';
 
 interface Project {
   id: string;
@@ -42,7 +43,7 @@ export const BuildTerminal: React.FC<BuildTerminalProps> = ({ project, initialDe
     }
 
     setLogs([]);
-    const es = new EventSource(`http://localhost:3001/api/deployments/${depId}/logs`);
+    const es = new EventSource(`${API_BASE_URL}/api/deployments/${depId}/logs`);
     eventSourceRef.current = es;
 
     es.onmessage = (event) => {
@@ -115,7 +116,7 @@ export const BuildTerminal: React.FC<BuildTerminalProps> = ({ project, initialDe
   const handleRedeploy = async () => {
     setRedeploying(true);
     try {
-      const response = await fetch(`http://localhost:3001/api/projects/${project.id}/redeploy`, {
+      const response = await fetch(`${API_BASE_URL}/api/projects/${project.id}/redeploy`, {
         method: 'POST'
       });
       const data = await response.json();
@@ -230,7 +231,7 @@ export const BuildTerminal: React.FC<BuildTerminalProps> = ({ project, initialDe
             onClick={async () => {
               if (window.confirm(`Are you sure you want to delete the project "${project.name}"? This action cannot be undone.`)) {
                 try {
-                  const response = await fetch(`http://localhost:3001/api/projects/${project.id}`, {
+                  const response = await fetch(`${API_BASE_URL}/api/projects/${project.id}`, {
                     method: 'DELETE'
                   });
                   if (response.ok) {

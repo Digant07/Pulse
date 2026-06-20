@@ -7,6 +7,7 @@ import { BuildTerminal } from './components/BuildTerminal';
 import { DocsModal } from './components/DocsModal';
 import { FeedbackModal } from './components/FeedbackModal';
 import { ExternalLink } from 'lucide-react';
+import { API_BASE_URL } from './config';
 import './App.css';
 
 interface User {
@@ -92,7 +93,7 @@ function App() {
   const fetchProjects = async () => {
     if (!user) return;
     try {
-      const response = await fetch('http://localhost:3001/api/projects');
+      const response = await fetch(`${API_BASE_URL}/api/projects`);
       const data = await response.json();
       if (response.ok) {
         setProjects(data);
@@ -128,7 +129,7 @@ function App() {
 
   const handleSelectProject = async (projectId: string) => {
     try {
-      const response = await fetch(`http://localhost:3001/api/projects/${projectId}`);
+      const response = await fetch(`${API_BASE_URL}/api/projects/${projectId}`);
       const data = await response.json();
       if (response.ok) {
         setSelectedProject(data.project);

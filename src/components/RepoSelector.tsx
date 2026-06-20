@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Search, ArrowLeft, GitFork, RefreshCw, AlertCircle } from 'lucide-react';
+import { API_BASE_URL } from '../config';
 
 interface Repo {
   id: number;
@@ -26,7 +27,7 @@ export const RepoSelector: React.FC<RepoSelectorProps> = ({ token, onBack, onSel
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('http://localhost:3001/api/github/repos', {
+      const response = await fetch(`${API_BASE_URL}/api/github/repos`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
