@@ -1,140 +1,216 @@
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
+const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
+const { DynamoDBDocumentClient, PutCommand, GetCommand, QueryCommand, DeleteCommand } = require('@aws-sdk/lib-dynamodb');
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 
-const dbPath = path.join(__dirname, 'database.json');
-
-// Initialize database
-function readDb() {
-  if (!fs.existsSync(dbPath)) {
-    fs.writeFileSync(dbPath, JSON.stringify({ projects: [], deployments: [] }, null, 2));
-  }
-  try {
-    return JSON.parse(fs.readFileSync(dbPath, 'utf8'));
-  } catch (e) {
-    return { projects: [], deployments: [] };
-  }
+// ─── DynamoDB Setup ───────────────────────────────────────────────────────────
+const dynamoConfig = { region: process.env.AWS_REGION || 'ap-south-1' };
+if (process.env.AWS_ACCESS_KEY_ID) {
+  dynamoConfig.credentials = {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  };
 }
+const dynamoClient = new DynamoDBClient(dynamoConfig);
+const docClient = DynamoDBDocumentClient.from(dynamoClient, {
+  marshallOptions: { removeUndefinedValues: true }
+});
 
-function writeDb(data) {
-  fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
-}
+const PROJECTS_TABLE   = process.env.DYNAMO_PROJECTS_TABLE   || 'pluse-projects';
+const DEPLOYMENTS_TABLE = process.env.DYNAMO_DEPLOYMENTS_TABLE || 'pluse-deployments';
 
-// In-memory active build logs and listeners for Server-Sent Events (SSE)
-const activeLogs = {};       // deploymentId -> array of log strings
-const activeListeners = {};  // deploymentId -> array of SSE response objects
+// ─── In-Memory SSE Buffers ────────────────────────────────────────────────────
+const activeLogs      = {};  // deploymentId → string[]
+const activeListeners = {};  // deploymentId → Response[]
 
-// GitHub OAuth configuration
-const CLIENT_ID = process.env.GITHUB_CLIENT_ID;
+// GitHub OAuth config
+const CLIENT_ID     = process.env.GITHUB_CLIENT_ID;
 const CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
 
-// 1. AUTH ENDPOINTS
+// ─── Utility ──────────────────────────────────────────────────────────────────
+function getUserId(req) {
+  return req.headers['x-user-id'] || req.body?.owner || 'anonymous';
+}
+
+function broadcastLog(id, line) {
+  if (activeListeners[id]) {
+    activeListeners[id].forEach(l => l.write(`data: ${JSON.stringify({ log: line })}\n\n`));
+  }
+}
+
+function broadcastStatus(id, status) {
+  if (activeListeners[id]) {
+    activeListeners[id].forEach(l => l.write(`data: ${JSON.stringify({ status })}\n\n`));
+  }
+}
+
+// ─── DynamoDB Helpers ─────────────────────────────────────────────────────────
+async function getProjectsByUser(userId) {
+  try {
+    const result = await docClient.send(new QueryCommand({
+      TableName: PROJECTS_TABLE,
+      KeyConditionExpression: 'userId = :uid',
+      ExpressionAttributeValues: { ':uid': userId },
+      ScanIndexForward: false
+    }));
+    return result.Items || [];
+  } catch (err) {
+    console.error('[DynamoDB] getProjectsByUser error:', err.message);
+    return [];
+  }
+}
+
+async function getProjectById(userId, projectId) {
+  try {
+    const result = await docClient.send(new GetCommand({
+      TableName: PROJECTS_TABLE,
+      Key: { userId, projectId }
+    }));
+    return result.Item || null;
+  } catch (err) {
+    console.error('[DynamoDB] getProjectById error:', err.message);
+    return null;
+  }
+}
+
+async function saveProject(projectData) {
+  try {
+    await docClient.send(new PutCommand({ TableName: PROJECTS_TABLE, Item: projectData }));
+  } catch (err) {
+    console.error('[DynamoDB] saveProject error:', err.message);
+    throw err;
+  }
+}
+
+async function deleteProject(userId, projectId) {
+  try {
+    await docClient.send(new DeleteCommand({ TableName: PROJECTS_TABLE, Key: { userId, projectId } }));
+  } catch (err) {
+    console.error('[DynamoDB] deleteProject error:', err.message);
+    throw err;
+  }
+}
+
+async function getDeploymentsByProject(projectId) {
+  try {
+    const result = await docClient.send(new QueryCommand({
+      TableName: DEPLOYMENTS_TABLE,
+      IndexName: 'projectId-index',
+      KeyConditionExpression: 'projectId = :pid',
+      ExpressionAttributeValues: { ':pid': projectId },
+      ScanIndexForward: false
+    }));
+    return result.Items || [];
+  } catch (err) {
+    console.error('[DynamoDB] getDeploymentsByProject error:', err.message);
+    return [];
+  }
+}
+
+async function getDeploymentById(deploymentId) {
+  try {
+    const result = await docClient.send(new GetCommand({
+      TableName: DEPLOYMENTS_TABLE,
+      Key: { deploymentId }
+    }));
+    return result.Item || null;
+  } catch (err) {
+    console.error('[DynamoDB] getDeploymentById error:', err.message);
+    return null;
+  }
+}
+
+async function saveDeployment(deploymentData) {
+  try {
+    await docClient.send(new PutCommand({ TableName: DEPLOYMENTS_TABLE, Item: deploymentData }));
+  } catch (err) {
+    console.error('[DynamoDB] saveDeployment error:', err.message);
+    throw err;
+  }
+}
+
+async function deleteDeployment(deploymentId) {
+  try {
+    await docClient.send(new DeleteCommand({ TableName: DEPLOYMENTS_TABLE, Key: { deploymentId } }));
+  } catch (err) {
+    console.error('[DynamoDB] deleteDeployment error:', err.message);
+  }
+}
+
+// ─── Health Check ─────────────────────────────────────────────────────────────
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), service: 'pluse-server' });
+});
+
+// ─── 1. AUTH ENDPOINTS ────────────────────────────────────────────────────────
 app.get('/api/auth/github', (req, res) => {
   const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
-  const BACKEND_URL = process.env.BACKEND_URL || `http://localhost:${PORT}`;
+  const BACKEND_URL  = process.env.BACKEND_URL  || `http://localhost:${PORT}`;
 
   if (!CLIENT_ID || !CLIENT_SECRET) {
-    return res.redirect(`${FRONTEND_URL}/?auth_error=` + encodeURIComponent('GitHub OAuth is not configured on the server. Please add GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET keys to your .env file in the project root and restart the server, or use Sandbox Mode / Personal Access Token.'));
+    return res.redirect(`${FRONTEND_URL}/?auth_error=` + encodeURIComponent('GitHub OAuth is not configured on the server. Please add GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET to your environment and restart.'));
   }
   const redirectUri = `${BACKEND_URL}/api/auth/callback`;
-  const githubUrl = `https://github.com/login/oauth/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=repo,user`;
+  const githubUrl   = `https://github.com/login/oauth/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=repo,user`;
   res.redirect(githubUrl);
 });
 
 app.get('/api/auth/callback', async (req, res) => {
   const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
   const { code } = req.query;
-  if (!code) {
-    return res.redirect(`${FRONTEND_URL}/?auth_error=No+code+provided+from+GitHub`);
-  }
+  if (!code) return res.redirect(`${FRONTEND_URL}/?auth_error=No+code+provided+from+GitHub`);
 
   try {
     const tokenResponse = await axios.post('https://github.com/login/oauth/access_token', {
       client_id: CLIENT_ID,
       client_secret: CLIENT_SECRET,
       code,
-    }, {
-      headers: {
-        Accept: 'application/json',
-      }
-    });
+    }, { headers: { Accept: 'application/json' } });
 
     const { access_token, error, error_description } = tokenResponse.data;
     if (error) {
       return res.redirect(`${FRONTEND_URL}/?auth_error=${encodeURIComponent(error_description || error)}`);
     }
 
-    // Fetch user profile info
     const userResponse = await axios.get('https://api.github.com/user', {
-      headers: {
-        Authorization: `Bearer ${access_token}`,
-        Accept: 'application/json',
-        'User-Agent': 'Pluse-Vercel-Clone'
-      }
+      headers: { Authorization: `Bearer ${access_token}`, Accept: 'application/json', 'User-Agent': 'Pluse-App' }
     });
 
-    const user = {
-      login: userResponse.data.login,
-      name: userResponse.data.name || userResponse.data.login,
-      avatar_url: userResponse.data.avatar_url,
-      token: access_token
-    };
-
-    res.redirect(`${FRONTEND_URL}/?auth_success=true&token=${user.token}&login=${user.login}&name=${encodeURIComponent(user.name)}&avatar=${user.avatar_url}`);
+    const { login, name, avatar_url } = userResponse.data;
+    res.redirect(`${FRONTEND_URL}/?auth_success=true&token=${access_token}&login=${login}&name=${encodeURIComponent(name || login)}&avatar=${avatar_url}`);
   } catch (err) {
     console.error('OAuth Callback Error:', err.message);
     res.redirect(`${FRONTEND_URL}/?auth_error=${encodeURIComponent(err.message)}`);
   }
 });
 
-// 2. GITHUB REPOSITORY ENDPOINTS
+// ─── 2. GITHUB REPOSITORY ENDPOINTS ──────────────────────────────────────────
 app.get('/api/github/repos', async (req, res) => {
   const token = req.headers.authorization?.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ error: 'Unauthorized: GitHub access token is required.' });
-  }
+  if (!token) return res.status(401).json({ error: 'Unauthorized: GitHub access token is required.' });
 
   if (token === 'mocktoken') {
     return res.json([
-      {
-        id: 101,
-        name: 'pluse-project-demo',
-        description: 'Vercel clone live demo project',
-        default_branch: 'main',
-        updated_at: new Date().toISOString(),
-        owner: { login: 'mockuser' }
-      },
-      {
-        id: 102,
-        name: 'react-app-example',
-        description: 'React + Vite project template',
-        default_branch: 'master',
-        updated_at: new Date().toISOString(),
-        owner: { login: 'mockuser' }
-      }
+      { id: 101, name: 'pluse-project-demo', description: 'Vercel clone live demo project', default_branch: 'main', updated_at: new Date().toISOString(), owner: { login: 'mockuser' } },
+      { id: 102, name: 'react-app-example', description: 'React + Vite project template', default_branch: 'master', updated_at: new Date().toISOString(), owner: { login: 'mockuser' } }
     ]);
   }
 
   try {
     const response = await axios.get('https://api.github.com/user/repos?per_page=100&sort=updated', {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/vnd.github.v3+json',
-        'User-Agent': 'Pluse-Vercel-Clone'
-      }
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github.v3+json', 'User-Agent': 'Pluse-App' }
     });
-
     const repos = response.data.map(repo => ({
       id: repo.id,
       name: repo.name,
@@ -145,149 +221,194 @@ app.get('/api/github/repos', async (req, res) => {
     }));
     res.json(repos);
   } catch (err) {
-    console.error('Error fetching Github repos:', err.message);
+    console.error('Error fetching GitHub repos:', err.message);
     res.status(500).json({ error: 'Failed to fetch repositories: ' + err.message });
   }
 });
 
-// Detect framework from package.json
+// Enhanced framework detection — checks config files AND dependencies
 app.get('/api/github/repos/:owner/:repo/framework', async (req, res) => {
   const { owner, repo } = req.params;
   const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'Unauthorized.' });
+  if (token === 'mocktoken') return res.json({ framework: 'static', detected: true, confidence: 'low' });
 
-  if (!token) {
-    return res.status(401).json({ error: 'Unauthorized: GitHub access token is required.' });
-  }
-
-  if (token === 'mocktoken') {
-    return res.json({ framework: 'static', detected: true, packageJson: {} });
-  }
+  let pkg = {};
+  let rootFiles = [];
 
   try {
-    const response = await axios.get(`https://api.github.com/repos/${owner}/${repo}/contents/package.json`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/vnd.github.v3+json',
-        'User-Agent': 'Pluse-Vercel-Clone'
-      }
+    const pkgResp = await axios.get(`https://api.github.com/repos/${owner}/${repo}/contents/package.json`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github.v3+json', 'User-Agent': 'Pluse-App' }
     });
+    pkg = JSON.parse(Buffer.from(pkgResp.data.content, 'base64').toString('utf8'));
+  } catch { /* no package.json — static site */ }
 
-    const content = Buffer.from(response.data.content, 'base64').toString('utf8');
-    const pkg = JSON.parse(content);
-    const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+  try {
+    const rootResp = await axios.get(`https://api.github.com/repos/${owner}/${repo}/contents/`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github.v3+json', 'User-Agent': 'Pluse-App' }
+    });
+    rootFiles = rootResp.data.map(f => f.name);
+  } catch { /* can't list root */ }
 
-    let framework = 'static';
-    if (deps['next']) framework = 'next';
-    else if (deps['@vue/cli-service'] || deps['vue'] && deps['vite']) framework = 'vue';
-    else if (deps['svelte']) framework = 'svelte';
-    else if (deps['react'] && deps['vite']) framework = 'vite';
-    else if (deps['react']) framework = 'react';
+  const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
 
-    res.json({ framework, detected: true, packageJson: pkg });
-  } catch (err) {
-    res.json({ framework: 'static', detected: false, error: err.message });
+  // Detection — config files take precedence over package dependencies
+  let framework = 'static';
+  let confidence = 'low';
+
+  if (rootFiles.some(f => f.startsWith('astro.config'))) {
+    framework = 'astro';         confidence = 'high';
+  } else if (rootFiles.some(f => f.startsWith('nuxt.config'))) {
+    framework = 'nuxt';          confidence = 'high';
+  } else if (rootFiles.some(f => f === 'remix.config.js' || f === 'remix.config.ts' || f === 'remix.config.cjs')) {
+    framework = 'remix';         confidence = 'high';
+  } else if (rootFiles.some(f => f.startsWith('gatsby-config'))) {
+    framework = 'gatsby';        confidence = 'high';
+  } else if (rootFiles.includes('angular.json')) {
+    framework = 'angular';       confidence = 'high';
+  } else if (rootFiles.some(f => f.startsWith('svelte.config'))) {
+    framework = 'svelte';        confidence = 'high';
+  } else if (rootFiles.some(f => f.startsWith('next.config'))) {
+    framework = 'next';          confidence = 'high';
+  } else if (deps['next']) {
+    framework = 'next';          confidence = 'high';
+  } else if (deps['astro']) {
+    framework = 'astro';         confidence = 'medium';
+  } else if (deps['nuxt'] || deps['nuxt3'] || deps['@nuxt/kit']) {
+    framework = 'nuxt';          confidence = 'medium';
+  } else if (deps['@remix-run/node'] || deps['@remix-run/react']) {
+    framework = 'remix';         confidence = 'medium';
+  } else if (deps['gatsby']) {
+    framework = 'gatsby';        confidence = 'medium';
+  } else if (deps['@angular/core']) {
+    framework = 'angular';       confidence = 'medium';
+  } else if (deps['@sveltejs/kit']) {
+    framework = 'svelte';        confidence = 'high';
+  } else if (deps['svelte']) {
+    framework = 'svelte';        confidence = 'medium';
+  } else if (deps['vite'] && (deps['react'] || deps['vue'] || deps['solid-js'])) {
+    framework = 'vite';          confidence = 'high';
+  } else if (deps['vite']) {
+    framework = 'vite';          confidence = 'medium';
+  } else if (deps['react-scripts']) {
+    framework = 'react-cra';     confidence = 'high';
+  } else if (deps['vue'] && !deps['vite']) {
+    framework = 'vue';           confidence = 'medium';
+  } else if (deps['react']) {
+    framework = 'react-cra';     confidence = 'low';
+  } else if (Object.keys(deps).length > 0) {
+    framework = 'static';        confidence = 'low';
   }
+
+  res.json({ framework, detected: true, confidence, packageJson: pkg, rootFiles });
 });
 
-// 3. PROJECT & DEPLOYMENT MANAGEMENT (API GATEWAY)
-app.get('/api/projects', (req, res) => {
-  const db = readDb();
-  res.json(db.projects);
+// ─── 3. PROJECT MANAGEMENT ────────────────────────────────────────────────────
+app.get('/api/projects', async (req, res) => {
+  const userId = getUserId(req);
+  if (!userId || userId === 'anonymous') {
+    return res.status(401).json({ error: 'User ID required. Include x-user-id header.' });
+  }
+  const projects = await getProjectsByUser(userId);
+  res.json(projects);
 });
 
-app.post('/api/projects', (req, res) => {
+app.post('/api/projects', async (req, res) => {
   const { name, repository, branch, framework, buildCommand, outputDirectory, env, owner } = req.body;
+  const userId = owner || getUserId(req);
 
   if (!name || !repository) {
     return res.status(400).json({ error: 'Project name and repository are required.' });
   }
 
-  const db = readDb();
-
-  // Check if project name exists
-  const existingProject = db.projects.find(p => p.name.toLowerCase() === name.toLowerCase());
-  if (existingProject) {
+  // Duplicate name check (per user)
+  const existingProjects = await getProjectsByUser(userId);
+  if (existingProjects.find(p => p.name?.toLowerCase() === name.toLowerCase())) {
     return res.status(400).json({ error: 'A project with this name already exists on Pluse.' });
   }
 
-  const projectId = uuidv4();
-  const subDomain = name.toLowerCase().replace(/[^a-z0-9-]/g, '');
-  const projectUrl = `https://${subDomain}.pluse.dev`;
+  const projectId   = uuidv4();
+  const subDomain   = name.toLowerCase().replace(/[^a-z0-9-]/g, '');
+  const pendingUrl  = `https://${subDomain}.pulse.jo3.org`;  // Real URL set after deploy
 
   const newProject = {
-    id: projectId,
+    userId,             // DynamoDB PK
+    projectId,          // DynamoDB SK
+    id: projectId,      // Frontend alias
     name,
     repository,
     branch: branch || 'main',
-    framework,
+    framework: framework || 'static',
     buildCommand: buildCommand || getDefaultBuildCommand(framework),
     outputDirectory: outputDirectory || getDefaultOutputDir(framework),
     env: env || [],
-    url: projectUrl,
+    url: pendingUrl,
+    deployedUrl: null,
     createdAt: new Date().toISOString(),
-    owner: owner || 'mockuser',
+    owner: userId,
     status: 'QUEUED'
   };
 
-  db.projects.push(newProject);
-  writeDb(db);
-
-  // Trigger initial deployment
-  const deployment = triggerDeployment(newProject);
-
-  res.json({ project: newProject, deployment });
+  try {
+    await saveProject(newProject);
+    const deployment = await triggerDeployment(newProject);
+    res.json({ project: newProject, deployment });
+  } catch (err) {
+    console.error('Failed to create project:', err.message);
+    res.status(500).json({ error: 'Failed to create project: ' + err.message });
+  }
 });
 
-app.get('/api/projects/:id', (req, res) => {
+app.get('/api/projects/:id', async (req, res) => {
   const { id } = req.params;
-  const db = readDb();
-  const project = db.projects.find(p => p.id === id);
-  if (!project) {
-    return res.status(404).json({ error: 'Project not found.' });
-  }
+  const userId = getUserId(req);
 
-  const deployments = db.deployments.filter(d => d.projectId === id);
+  const project = await getProjectById(userId, id);
+  if (!project) return res.status(404).json({ error: 'Project not found.' });
+
+  const deployments = await getDeploymentsByProject(id);
   res.json({ project, deployments });
 });
 
-// Redeploy project trigger
-app.post('/api/projects/:id/redeploy', (req, res) => {
+app.post('/api/projects/:id/redeploy', async (req, res) => {
   const { id } = req.params;
-  const db = readDb();
-  const project = db.projects.find(p => p.id === id);
-  if (!project) {
-    return res.status(404).json({ error: 'Project not found.' });
-  }
+  const userId = getUserId(req);
 
-  const deployment = triggerDeployment(project);
+  const project = await getProjectById(userId, id);
+  if (!project) return res.status(404).json({ error: 'Project not found.' });
+
+  // Reset project status
+  await saveProject({ ...project, status: 'QUEUED' });
+
+  const deployment = await triggerDeployment(project);
   res.json({ deployment });
 });
 
-// Delete project
-app.delete('/api/projects/:id', (req, res) => {
+app.delete('/api/projects/:id', async (req, res) => {
   const { id } = req.params;
-  const db = readDb();
+  const userId = getUserId(req);
 
-  const projectIndex = db.projects.findIndex(p => p.id === id);
-  if (projectIndex === -1) {
-    return res.status(404).json({ error: 'Project not found.' });
+  const project = await getProjectById(userId, id);
+  if (!project) return res.status(404).json({ error: 'Project not found.' });
+
+  try {
+    await deleteProject(userId, id);
+
+    // Remove all associated deployments
+    const deployments = await getDeploymentsByProject(id);
+    await Promise.all(deployments.map(dep => deleteDeployment(dep.deploymentId)));
+
+    res.json({ success: true, message: 'Project and all deployments deleted.' });
+  } catch (err) {
+    console.error('Delete project error:', err.message);
+    res.status(500).json({ error: 'Failed to delete project.' });
   }
-
-  // Remove the project
-  db.projects.splice(projectIndex, 1);
-
-  // Remove all deployments associated with the project
-  db.deployments = db.deployments.filter(d => d.projectId !== id);
-
-  writeDb(db);
-  res.json({ success: true, message: 'Project and all associated deployments deleted successfully.' });
 });
 
-// SSE Log Stream Route
-app.get('/api/deployments/:id/logs', (req, res) => {
+// ─── 4. SSE LOG STREAM ────────────────────────────────────────────────────────
+app.get('/api/deployments/:id/logs', async (req, res) => {
   const { id } = req.params;
 
-  // Set headers for Server-Sent Events (SSE)
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -295,72 +416,53 @@ app.get('/api/deployments/:id/logs', (req, res) => {
     'Access-Control-Allow-Origin': '*'
   });
 
-  // Find deployment status to send initial status
-  const db = readDb();
-  const deployment = db.deployments.find(d => d.id === id);
+  const deployment = await getDeploymentById(id);
+  const logs = activeLogs[id] || [];
 
-  // Fetch initial logs
-  let logs = activeLogs[id];
-  if (!logs && deployment) {
-    const project = db.projects.find(p => p.id === deployment.projectId);
-    if (project && deployment.status === 'READY') {
-      // Re-generate completed static logs on the fly if cleared from memory on server restarts
-      logs = generateStaticLogs(project);
-      activeLogs[id] = logs;
-    }
-  }
-
-  logs = logs || [];
-  logs.forEach(log => {
-    res.write(`data: ${JSON.stringify({ log })}\n\n`);
-  });
+  // Replay buffered logs to the new connection
+  logs.forEach(log => res.write(`data: ${JSON.stringify({ log })}\n\n`));
 
   if (deployment) {
     res.write(`data: ${JSON.stringify({ status: deployment.status })}\n\n`);
   }
 
-  // Register SSE listener
-  if (!activeListeners[id]) {
-    activeListeners[id] = [];
-  }
+  if (!activeListeners[id]) activeListeners[id] = [];
   activeListeners[id].push(res);
 
-  // Connection close cleanup
   req.on('close', () => {
-    activeListeners[id] = activeListeners[id].filter(listener => listener !== res);
+    activeListeners[id] = (activeListeners[id] || []).filter(l => l !== res);
   });
 });
 
-// 4. DEPLOYMENT BUILD PIPELINE
-function triggerDeployment(project) {
-  const db = readDb();
+// ─── 5. DEPLOYMENT BUILD PIPELINE ────────────────────────────────────────────
+async function triggerDeployment(project) {
   const deploymentId = uuidv4();
 
   const deployment = {
-    id: deploymentId,
-    projectId: project.id,
+    deploymentId,               // DynamoDB PK
+    id: deploymentId,           // Frontend alias
+    projectId: project.projectId || project.id,
+    userId: project.userId || project.owner,
     status: 'QUEUED',
     url: project.url,
     createdAt: new Date().toISOString(),
   };
 
-  db.deployments.push(deployment);
-  writeDb(db);
-
-  // Initialize empty log buffer for this deployment
+  await saveDeployment(deployment);
   activeLogs[deploymentId] = [];
 
-  // Trigger AWS Orchestrator Lambda to initiate CodeBuild
-  const orchestratorUrl = process.env.ORCHESTRATOR_URL || 'https://5a7qmkoqm5.execute-api.ap-south-1.amazonaws.com/prod/orchestrate';
-  const BACKEND_URL = process.env.BACKEND_URL || `http://localhost:${PORT}`;
-  const callbackUrl = `${BACKEND_URL}/api/deployments/${deploymentId}/callback`;
+  const orchestratorUrl = process.env.ORCHESTRATOR_URL || 'https://5a7qmkoqm5.execute-api.ap-south-1.amazonaws.com//orchestrate';
+  const BACKEND_URL     = process.env.BACKEND_URL || `http://localhost:${PORT}`;
+  const callbackUrl     = `${BACKEND_URL}/api/deployments/${deploymentId}/callback`;
 
-  console.log(`[Orchestrator] Invoking Lambda at ${orchestratorUrl} for project ${project.name}`);
-  console.log(`[Orchestrator] Callback URL: ${callbackUrl}`);
+  console.log(`[Orchestrator] Invoking Lambda for project "${project.name}" (${deploymentId})`);
+
+  const queuedLog = `[${new Date().toISOString().split('T')[1].slice(0, -1)}] ⏳ Deployment queued. Waiting for AWS CodeBuild to pick up the job...`;
+  activeLogs[deploymentId].push(queuedLog);
 
   const payload = {
-    projectId: project.id,
-    deploymentId: deploymentId,
+    projectId: project.projectId || project.id,
+    deploymentId,
     name: project.name,
     repository: project.repository,
     branch: project.branch,
@@ -369,120 +471,78 @@ function triggerDeployment(project) {
     outputDirectory: project.outputDirectory,
     env: project.env,
     url: project.url,
-    callbackUrl: callbackUrl   // Lambda uses this to POST real status/logs back
+    callbackUrl,
   };
-
-  // Emit an initial "queued" log so the UI is not blank
-  const queuedLog = `[${new Date().toISOString().split('T')[1].slice(0, -1)}] ⏳ Deployment queued. Waiting for AWS CodeBuild to pick up the job...`;
-  activeLogs[deploymentId].push(queuedLog);
 
   axios.post(orchestratorUrl, payload, {
     headers: { 'Content-Type': 'application/json' },
     timeout: 15000
-  })
-    .then(response => {
-      console.log(`[Orchestrator] ✅ Lambda triggered successfully. HTTP ${response.status}`, JSON.stringify(response.data));
+  }).then(response => {
+    console.log(`[Orchestrator] ✅ Lambda triggered. HTTP ${response.status}`);
+    const triggeredLog = `[${new Date().toISOString().split('T')[1].slice(0, -1)}] 🚀 Build job dispatched to AWS CodeBuild. Streaming real-time logs below...`;
+    activeLogs[deploymentId].push(triggeredLog);
+    broadcastLog(deploymentId, triggeredLog);
+  }).catch(async err => {
+    const errorMsg = err.response
+      ? `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}`
+      : `No response received: ${err.message}`;
 
-      // Add a log confirming Lambda was triggered
-      const triggeredLog = `[${new Date().toISOString().split('T')[1].slice(0, -1)}] 🚀 Build job dispatched to AWS CodeBuild. Streaming real-time logs below...`;
-      activeLogs[deploymentId].push(triggeredLog);
-      if (activeListeners[deploymentId]) {
-        activeListeners[deploymentId].forEach(listener => {
-          listener.write(`data: ${JSON.stringify({ log: triggeredLog })}
+    console.error(`[Orchestrator] ❌ Lambda call failed: ${errorMsg}`);
 
-`);
-        });
-      }
-    })
-    .catch(err => {
-      let errorMsg = '';
-      if (err.response) {
-        errorMsg = `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}`;
-        console.error(`[Orchestrator] ❌ Lambda call failed. ${errorMsg}`);
-      } else if (err.request) {
-        errorMsg = `No response (timeout or network issue): ${err.message}`;
-        console.error(`[Orchestrator] ❌ ${errorMsg}`);
-      } else {
-        errorMsg = err.message;
-        console.error(`[Orchestrator] ❌ Error setting up Lambda request: ${errorMsg}`);
-      }
+    const failLog = `[${new Date().toISOString().split('T')[1].slice(0, -1)}] ❌ Failed to trigger build: ${errorMsg}`;
+    activeLogs[deploymentId].push(failLog);
+    broadcastLog(deploymentId, failLog);
+    broadcastStatus(deploymentId, 'FAILED');
 
-      // Update status to FAILED and notify SSE listeners
-      const failLog = `[${new Date().toISOString().split('T')[1].slice(0, -1)}] ❌ Failed to trigger build: ${errorMsg}`;
-      activeLogs[deploymentId].push(failLog);
-      if (activeListeners[deploymentId]) {
-        activeListeners[deploymentId].forEach(listener => {
-          listener.write(`data: ${JSON.stringify({ log: failLog })}
-
-`);
-          listener.write(`data: ${JSON.stringify({ status: 'FAILED' })}
-
-`);
-        });
-      }
-
-      // Persist FAILED status to DB
-      const failDb = readDb();
-      const dIdx = failDb.deployments.findIndex(d => d.id === deploymentId);
-      if (dIdx !== -1) failDb.deployments[dIdx].status = 'FAILED';
-      const pIdx = failDb.projects.findIndex(p => p.id === project.id);
-      if (pIdx !== -1) failDb.projects[pIdx].status = 'FAILED';
-      writeDb(failDb);
-    });
+    const dep = await getDeploymentById(deploymentId);
+    if (dep) await saveDeployment({ ...dep, status: 'FAILED' });
+    await saveProject({ ...project, status: 'FAILED' });
+  });
 
   return deployment;
 }
 
-// 5. REAL-TIME CALLBACK ENDPOINT — called by Lambda/CodeBuild to push real logs & status
-// Expected POST body: { status?: string, log?: string, logs?: string[] }
-app.post('/api/deployments/:id/callback', (req, res) => {
+// ─── 6. CALLBACK ENDPOINT (called by Lambda/CodeBuild) ────────────────────────
+// Body: { status?, log?, logs?: string[], deployedUrl? }
+app.post('/api/deployments/:id/callback', async (req, res) => {
   const { id } = req.params;
-  const { status, log, logs } = req.body;
+  const { status, log, logs, deployedUrl } = req.body;
 
-  console.log(`[Callback] Received update for deployment ${id}: status=${status}, logs=${logs ? logs.length : log ? 1 : 0} lines`);
+  console.log(`[Callback] Deployment ${id}: status=${status}, lines=${logs?.length ?? (log ? 1 : 0)}, deployedUrl=${deployedUrl || 'none'}`);
 
-  if (!activeLogs[id]) {
-    activeLogs[id] = [];
-  }
+  if (!activeLogs[id]) activeLogs[id] = [];
 
-  // Accept a single log line OR an array of log lines
   const logLines = logs || (log ? [log] : []);
-
   logLines.forEach(line => {
     activeLogs[id].push(line);
-    if (activeListeners[id]) {
-      activeListeners[id].forEach(listener => {
-        listener.write(`data: ${JSON.stringify({ log: line })}
-
-`);
-      });
-    }
+    broadcastLog(id, line);
   });
 
-  // Update status in DB and broadcast to SSE listeners
   if (status) {
-    const db = readDb();
-    const dIdx = db.deployments.findIndex(d => d.id === id);
-    if (dIdx !== -1) {
-      db.deployments[dIdx].status = status;
-      // Also update parent project status
-      const pIdx = db.projects.findIndex(p => p.id === db.deployments[dIdx].projectId);
-      if (pIdx !== -1) db.projects[pIdx].status = status;
+    const dep = await getDeploymentById(id);
+    if (dep) {
+      const updatedDep = { ...dep, status };
+      if (deployedUrl) updatedDep.url = deployedUrl;
+      await saveDeployment(updatedDep);
+
+      // Update parent project status + real deployed URL
+      const proj = await getProjectById(dep.userId, dep.projectId);
+      if (proj) {
+        const updatedProj = { ...proj, status };
+        if (deployedUrl) {
+          updatedProj.url = deployedUrl;
+          updatedProj.deployedUrl = deployedUrl;
+        }
+        await saveProject(updatedProj);
+      }
     }
-    writeDb(db);
 
-    if (activeListeners[id]) {
-      activeListeners[id].forEach(listener => {
-        listener.write(`data: ${JSON.stringify({ status })}
+    broadcastStatus(id, status);
 
-`);
-      });
-    }
-
-    // Close SSE connections when build is done
+    // Close SSE connections once build is terminal
     if (status === 'READY' || status === 'FAILED') {
       if (activeListeners[id]) {
-        activeListeners[id].forEach(listener => listener.end());
+        activeListeners[id].forEach(l => l.end());
         delete activeListeners[id];
       }
     }
@@ -491,34 +551,48 @@ app.post('/api/deployments/:id/callback', (req, res) => {
   res.json({ ok: true });
 });
 
-
+// ─── Framework Defaults ───────────────────────────────────────────────────────
 function getDefaultBuildCommand(framework) {
   switch (framework) {
-    case 'next': return 'next build';
-    case 'vite':
-    case 'react': return 'npm run build';
-    case 'vue': return 'npm run build';
-    case 'svelte': return 'npm run build';
-    default: return 'echo "Static build: No compilation required"';
+    case 'next':      return 'npm run build';
+    case 'vite':      return 'npm run build';
+    case 'react-cra': return 'npm run build';
+    case 'vue':       return 'npm run build';
+    case 'svelte':    return 'npm run build';
+    case 'angular':   return 'npm run build';
+    case 'astro':     return 'npm run build';
+    case 'nuxt':      return 'npm run build';
+    case 'gatsby':    return 'npm run build';
+    case 'remix':     return 'npm run build';
+    default:          return 'echo "Static build: No compilation required"';
   }
 }
 
 function getDefaultOutputDir(framework) {
   switch (framework) {
-    case 'next': return '.next';
-    case 'vite':
-    case 'react': return 'dist';
-    case 'vue': return 'dist';
-    case 'svelte': return '.svelte-kit';
-    default: return '.';
+    case 'next':      return '.next';
+    case 'vite':      return 'dist';
+    case 'react-cra': return 'build';
+    case 'vue':       return 'dist';
+    case 'svelte':    return 'build';
+    case 'angular':   return 'dist';
+    case 'astro':     return 'dist';
+    case 'nuxt':      return '.output/public';
+    case 'gatsby':    return 'public';
+    case 'remix':     return 'public';
+    default:          return '.';
   }
 }
 
-// Start Server
+// ─── Start Server ──────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
-  console.log(`🚀 Pluse Gateway and Server running on port ${PORT}`);
-  console.log(`   FRONTEND_URL  : ${process.env.FRONTEND_URL || '(not set, defaulting to localhost:5173)'}`);
-  console.log(`   BACKEND_URL   : ${process.env.BACKEND_URL || '(not set, defaulting to localhost:' + PORT + ')'}`);
-  console.log(`   ORCHESTRATOR  : ${process.env.ORCHESTRATOR_URL || '(not set, using hardcoded fallback)'}`);
-  console.log(`   GITHUB_CLIENT : ${process.env.GITHUB_CLIENT_ID ? process.env.GITHUB_CLIENT_ID.substring(0,6) + '...' : '(not set)'}`);
+  console.log(`\n🚀 Pluse Server running on port ${PORT}`);
+  console.log(`   FRONTEND_URL    : ${process.env.FRONTEND_URL || '(not set — defaulting to localhost:5173)'}`);
+  console.log(`   BACKEND_URL     : ${process.env.BACKEND_URL  || '(not set — defaulting to localhost:' + PORT + ')'}`);
+  console.log(`   ORCHESTRATOR    : ${process.env.ORCHESTRATOR_URL || '(not set)'}`);
+  console.log(`   AWS_REGION      : ${process.env.AWS_REGION   || 'ap-south-1'}`);
+  console.log(`   PROJECTS TABLE  : ${PROJECTS_TABLE}`);
+  console.log(`   DEPLOYMENTS TBL : ${DEPLOYMENTS_TABLE}`);
+  console.log(`   GITHUB_CLIENT   : ${process.env.GITHUB_CLIENT_ID ? process.env.GITHUB_CLIENT_ID.substring(0,8) + '...' : '(not set)'}`);
+  console.log('');
 });

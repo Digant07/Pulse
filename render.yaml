@@ -1,0 +1,19 @@
+services:
+  # Express backend API server
+  - type: web
+    name: pluse-server
+    runtime: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node index.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # All sensitive values are set via Render Dashboard -> Environment
+      # Required: GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET
+      # Required: AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+      # Required: DYNAMO_PROJECTS_TABLE, DYNAMO_DEPLOYMENTS_TABLE
+      # Required: ORCHESTRATOR_URL
+      # Required: FRONTEND_URL  (e.g. https://pulse.jo3.org)
+      # Required: BACKEND_URL   (e.g. https://pluse-server.onrender.com)

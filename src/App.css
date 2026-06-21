@@ -2095,3 +2095,131 @@ body {
   color: var(--color-primary);
 }
 
+/* ─── Framework Info Preview ────────────────────────────────────────────────── */
+.framework-info-preview {
+  margin-top: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.framework-info-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.fw-info-label {
+  color: var(--color-muted);
+  flex-shrink: 0;
+  min-width: 110px;
+}
+
+.fw-info-value {
+  color: var(--accent-cyan);
+  font-family: var(--terminal-font);
+  font-size: 11px;
+  background: rgba(0, 223, 216, 0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.fw-info-hint {
+  color: var(--color-secondary);
+  font-size: 12px;
+  text-align: right;
+}
+
+/* ─── Framework Mismatch Warning Banner ─────────────────────────────────────── */
+.framework-mismatch-banner {
+  display: flex;
+  gap: 14px;
+  background: rgba(245, 166, 35, 0.08);
+  border: 1px solid rgba(245, 166, 35, 0.35);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+  animation: slideDown 0.2s ease-out;
+}
+
+.mismatch-icon-wrap {
+  color: var(--status-building);
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.mismatch-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+
+.mismatch-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--status-building);
+}
+
+.mismatch-desc {
+  font-size: 13px;
+  color: var(--color-secondary);
+  line-height: 1.5;
+}
+
+.mismatch-desc strong {
+  color: var(--color-primary);
+}
+
+.mismatch-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.btn-reset-fw {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(245, 166, 35, 0.15);
+  border: 1px solid rgba(245, 166, 35, 0.4);
+  color: var(--status-building);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+
+.btn-reset-fw:hover {
+  background: rgba(245, 166, 35, 0.25);
+  border-color: rgba(245, 166, 35, 0.6);
+  transform: translateY(-1px);
+}
+
+.btn-dismiss-fw {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+
+.btn-dismiss-fw:hover {
+  border-color: var(--border-focus);
+  color: var(--color-secondary);
+}

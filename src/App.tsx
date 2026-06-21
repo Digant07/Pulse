@@ -93,7 +93,9 @@ function App() {
   const fetchProjects = async () => {
     if (!user) return;
     try {
-      const response = await fetch(`${API_BASE_URL}/api/projects`);
+      const response = await fetch(`${API_BASE_URL}/api/projects`, {
+        headers: { 'x-user-id': user.login }
+      });
       const data = await response.json();
       if (response.ok) {
         setProjects(data);
@@ -129,7 +131,9 @@ function App() {
 
   const handleSelectProject = async (projectId: string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/projects/${projectId}`);
+      const response = await fetch(`${API_BASE_URL}/api/projects/${projectId}`, {
+        headers: { 'x-user-id': user!.login }
+      });
       const data = await response.json();
       if (response.ok) {
         setSelectedProject(data.project);
@@ -314,6 +318,7 @@ function App() {
                 project={selectedProject}
                 initialDeployment={selectedDeployment}
                 onBack={() => setView('dashboard')}
+                userId={user!.login}
               />
             )}
           </main>

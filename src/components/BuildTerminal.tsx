@@ -26,9 +26,10 @@ interface BuildTerminalProps {
   project: Project;
   initialDeployment: Deployment;
   onBack: () => void;
+  userId: string;
 }
 
-export const BuildTerminal: React.FC<BuildTerminalProps> = ({ project, initialDeployment, onBack }) => {
+export const BuildTerminal: React.FC<BuildTerminalProps> = ({ project, initialDeployment, onBack, userId }) => {
   const [deployment, setDeployment] = useState<Deployment>(initialDeployment);
   const [logs, setLogs] = useState<string[]>([]);
   const [status, setStatus] = useState<string>(initialDeployment.status);
@@ -117,7 +118,8 @@ export const BuildTerminal: React.FC<BuildTerminalProps> = ({ project, initialDe
     setRedeploying(true);
     try {
       const response = await fetch(`${API_BASE_URL}/api/projects/${project.id}/redeploy`, {
-        method: 'POST'
+        method: 'POST',
+        headers: { 'x-user-id': userId }
       });
       const data = await response.json();
       if (response.ok) {
@@ -232,7 +234,8 @@ export const BuildTerminal: React.FC<BuildTerminalProps> = ({ project, initialDe
               if (window.confirm(`Are you sure you want to delete the project "${project.name}"? This action cannot be undone.`)) {
                 try {
                   const response = await fetch(`${API_BASE_URL}/api/projects/${project.id}`, {
-                    method: 'DELETE'
+                    method: 'DELETE',
+                    headers: { 'x-user-id': userId }
                   });
                   if (response.ok) {
                     onBack();

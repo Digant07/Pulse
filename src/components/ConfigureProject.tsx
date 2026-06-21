@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, ChevronDown, ChevronUp, Plus, Trash2, GitBranch, Shield, Eye, EyeOff } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronUp, Plus, Trash2, GitBranch, Shield, Eye, EyeOff, AlertTriangle, RotateCcw } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 
 interface Repo {
@@ -23,30 +23,56 @@ interface ConfigureProjectProps {
   onDeploy: (projectConfig: any) => void;
 }
 
-export const ConfigureProject: React.FC<ConfigureProjectProps> = ({ repo, token, onBack, onDeploy }) => {
-  const [projectName, setProjectName] = useState(repo.name);
-  const [framework, setFramework] = useState('static');
-  const [buildCommand, setBuildCommand] = useState('echo "Static build: No compilation required"');
-  const [outputDirectory, setOutputDirectory] = useState('.');
-  const [envVars, setEnvVars] = useState<EnvVar[]>([]);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [loadingDetection, setLoadingDetection] = useState(true);
-  const [showEnvMap, setShowEnvMap] = useState<{ [index: number]: boolean }>({});
-  const [deploying, setDeploying] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+// ─── Framework registry ───────────────────────────────────────────────────────
+const FRAMEWORKS: { value: string; label: string; buildCmd: string; outputDir: string; hint: string }[] = [
+  { value: 'next',      label: 'Next.js',               buildCmd: 'npm run build', outputDir: '.next',           hint: 'Full-stack React with SSR/SSG' },
+  { value: 'vite',      label: 'Vite (React/Vue/Solid)', buildCmd: 'npm run build', outputDir: 'dist',            hint: 'Fast modern bundler for SPA apps' },
+  { value: 'react-cra', label: 'Create React App',       buildCmd: 'npm run build', outputDir: 'build',           hint: 'Classic CRA React bootstrap' },
+  { value: 'vue',       label: 'Vue CLI',                buildCmd: 'npm run build', outputDir: 'dist',            hint: 'Vue 2/3 CLI project' },
+  { value: 'svelte',    label: 'SvelteKit',              buildCmd: 'npm run build', outputDir: 'build',           hint: 'SvelteKit static/server app' },
+  { value: 'nuxt',      label: 'Nuxt.js',                buildCmd: 'npm run build', outputDir: '.output/public',  hint: 'Vue meta-framework (SSR/SSG)' },
+  { value: 'astro',     label: 'Astro',                  buildCmd: 'npm run build', outputDir: 'dist',            hint: 'Static-first MPA framework' },
+  { value: 'gatsby',    label: 'Gatsby',                 buildCmd: 'npm run build', outputDir: 'public',          hint: 'React static site generator' },
+  { value: 'remix',     label: 'Remix',                  buildCmd: 'npm run build', outputDir: 'public',          hint: 'Full-stack React web framework' },
+  { value: 'angular',   label: 'Angular',                buildCmd: 'npm run build', outputDir: 'dist',            hint: 'Google Angular platform' },
+  { value: 'static',    label: 'Other / Static HTML',    buildCmd: 'echo "Static build: No compilation required"', outputDir: '.', hint: 'Plain HTML/CSS/JS — no build step needed' },
+];
 
-  // Auto-detect framework
+function getFrameworkMeta(value: string) {
+  return FRAMEWORKS.find(f => f.value === value) || FRAMEWORKS[FRAMEWORKS.length - 1];
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+export const ConfigureProject: React.FC<ConfigureProjectProps> = ({ repo, token, onBack, onDeploy }) => {
+  const [projectName, setProjectName]         = useState(repo.name.toLowerCase().replace(/[^a-z0-9-]/g, ''));
+  const [framework, setFramework]             = useState('static');
+  const [detectedFramework, setDetectedFramework] = useState<string | null>(null);
+  const [detectedConfidence, setDetectedConfidence] = useState<string>('');
+  const [showMismatch, setShowMismatch]       = useState(false);
+  const [buildCommand, setBuildCommand]       = useState('echo "Static build: No compilation required"');
+  const [outputDirectory, setOutputDirectory] = useState('.');
+  const [envVars, setEnvVars]                 = useState<EnvVar[]>([]);
+  const [showAdvanced, setShowAdvanced]       = useState(false);
+  const [loadingDetection, setLoadingDetection] = useState(true);
+  const [showEnvMap, setShowEnvMap]           = useState<{ [index: number]: boolean }>({});
+  const [deploying, setDeploying]             = useState(false);
+  const [error, setError]                     = useState<string | null>(null);
+
+  // ─── Auto-detect framework ─────────────────────────────────────────────────
   useEffect(() => {
     const detectFramework = async () => {
       setLoadingDetection(true);
       try {
-        const response = await fetch(`${API_BASE_URL}/api/github/repos/${repo.owner.login}/${repo.name}/framework`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
+        const response = await fetch(
+          `${API_BASE_URL}/api/github/repos/${repo.owner.login}/${repo.name}/framework`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
         const data = await response.json();
         if (response.ok && data.detected) {
+          setDetectedFramework(data.framework);
+          setDetectedConfidence(data.confidence || 'medium');
           setFramework(data.framework);
-          updateBuildDefaults(data.framework);
+          applyFrameworkDefaults(data.framework);
         }
       } catch (err) {
         console.error('Failed to auto-detect framework:', err);
@@ -54,44 +80,37 @@ export const ConfigureProject: React.FC<ConfigureProjectProps> = ({ repo, token,
         setLoadingDetection(false);
       }
     };
-
     detectFramework();
   }, [repo, token]);
 
-  const updateBuildDefaults = (fw: string) => {
-    switch (fw) {
-      case 'next':
-        setBuildCommand('next build');
-        setOutputDirectory('.next');
-        break;
-      case 'vite':
-      case 'react':
-        setBuildCommand('npm run build');
-        setOutputDirectory('dist');
-        break;
-      case 'vue':
-        setBuildCommand('npm run build');
-        setOutputDirectory('dist');
-        break;
-      case 'svelte':
-        setBuildCommand('npm run build');
-        setOutputDirectory('.svelte-kit');
-        break;
-      default:
-        setBuildCommand('echo "Static build: No compilation required"');
-        setOutputDirectory('.');
-    }
+  const applyFrameworkDefaults = (fw: string) => {
+    const meta = getFrameworkMeta(fw);
+    setBuildCommand(meta.buildCmd);
+    setOutputDirectory(meta.outputDir);
   };
 
   const handleFrameworkChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const fw = e.target.value;
     setFramework(fw);
-    updateBuildDefaults(fw);
+    applyFrameworkDefaults(fw);
+
+    // Show mismatch warning only when user overrides a confident detection
+    if (detectedFramework && fw !== detectedFramework && detectedConfidence !== 'low') {
+      setShowMismatch(true);
+    } else {
+      setShowMismatch(false);
+    }
   };
 
-  const addEnvVar = () => {
-    setEnvVars([...envVars, { key: '', value: '' }]);
+  const resetToDetected = () => {
+    if (!detectedFramework) return;
+    setFramework(detectedFramework);
+    applyFrameworkDefaults(detectedFramework);
+    setShowMismatch(false);
   };
+
+  // ─── Env var helpers ───────────────────────────────────────────────────────
+  const addEnvVar = () => setEnvVars([...envVars, { key: '', value: '' }]);
 
   const removeEnvVar = (index: number) => {
     const next = [...envVars];
@@ -112,20 +131,17 @@ export const ConfigureProject: React.FC<ConfigureProjectProps> = ({ repo, token,
   };
 
   const toggleEnvVisibility = (index: number) => {
-    setShowEnvMap({
-      ...showEnvMap,
-      [index]: !showEnvMap[index]
-    });
+    setShowEnvMap({ ...showEnvMap, [index]: !showEnvMap[index] });
   };
 
+  // ─── Deploy submit ─────────────────────────────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!projectName.trim()) return;
 
     setDeploying(true);
     setError(null);
-    
-    // Filter empty env variables
+
     const cleanEnv = envVars.filter(ev => ev.key.trim() !== '');
 
     try {
@@ -140,8 +156,8 @@ export const ConfigureProject: React.FC<ConfigureProjectProps> = ({ repo, token,
           buildCommand,
           outputDirectory,
           env: cleanEnv,
-          owner: repo.owner.login
-        })
+          owner: repo.owner.login,
+        }),
       });
 
       const data = await response.json();
@@ -152,10 +168,12 @@ export const ConfigureProject: React.FC<ConfigureProjectProps> = ({ repo, token,
         setDeploying(false);
       }
     } catch (err) {
-      setError('Could not connect to backend server. Make sure the server is online.');
+      setError('Could not connect to the backend server. Make sure it is online.');
       setDeploying(false);
     }
   };
+
+  const selectedMeta = getFrameworkMeta(framework);
 
   return (
     <div>
@@ -173,20 +191,19 @@ export const ConfigureProject: React.FC<ConfigureProjectProps> = ({ repo, token,
 
       <div className="config-layout">
         <form onSubmit={handleSubmit} className="config-form-card">
+
+          {/* Error Banner */}
           {error && (
             <div style={{
-              backgroundColor: 'rgba(255, 0, 80, 0.1)',
-              border: '1px solid #ff0050',
-              borderRadius: '8px',
-              padding: '12px',
-              marginBottom: '20px',
-              color: '#ff0050',
-              fontSize: '13px'
+              backgroundColor: 'rgba(255, 0, 80, 0.1)', border: '1px solid #ff0050',
+              borderRadius: '8px', padding: '12px', marginBottom: '20px',
+              color: '#ff0050', fontSize: '13px'
             }}>
               {error}
             </div>
           )}
 
+          {/* Project Name */}
           <div className="form-group">
             <label className="form-label">Project Name</label>
             <input
@@ -198,10 +215,11 @@ export const ConfigureProject: React.FC<ConfigureProjectProps> = ({ repo, token,
               disabled={deploying}
             />
             <span style={{ fontSize: '11px', color: 'var(--color-muted)', display: 'block', marginTop: '4px' }}>
-              Only lowercase alphanumeric characters and hyphens allowed.
+              Will be deployed to: <code style={{ color: 'var(--accent-cyan)', fontFamily: 'monospace' }}>https://{projectName || 'your-name'}.pulse.jo3.org</code>
             </span>
           </div>
 
+          {/* Framework Preset */}
           <div className="form-group">
             <label className="form-label">Framework Preset</label>
             <select
@@ -210,20 +228,66 @@ export const ConfigureProject: React.FC<ConfigureProjectProps> = ({ repo, token,
               onChange={handleFrameworkChange}
               disabled={deploying || loadingDetection}
             >
-              <option value="next">Next.js</option>
-              <option value="vite">Vite (React/Vue/Svelte)</option>
-              <option value="react">Create React App</option>
-              <option value="vue">Vue CLI</option>
-              <option value="svelte">SvelteKit</option>
-              <option value="static">Other / Static HTML</option>
+              {FRAMEWORKS.map(fw => (
+                <option key={fw.value} value={fw.value}>{fw.label}</option>
+              ))}
             </select>
-            {loadingDetection && (
-              <span style={{ fontSize: '11px', color: 'var(--accent-cyan)', display: 'block', marginTop: '4px' }}>
-                Inspecting repository dependencies...
+
+            {loadingDetection ? (
+              <span style={{ fontSize: '11px', color: 'var(--accent-cyan)', display: 'block', marginTop: '6px' }}>
+                🔍 Inspecting repository dependencies...
               </span>
-            )}
+            ) : detectedFramework && !showMismatch ? (
+              <span style={{ fontSize: '11px', color: 'var(--status-ready)', display: 'block', marginTop: '6px' }}>
+                ✔ Auto-detected:{' '}
+                <strong>{getFrameworkMeta(detectedFramework).label}</strong>
+                {detectedConfidence === 'high' ? ' (high confidence)' : detectedConfidence === 'medium' ? ' (medium confidence)' : ''}
+              </span>
+            ) : null}
+
+            {/* Framework Info Preview */}
+            <div className="framework-info-preview">
+              <div className="framework-info-row">
+                <span className="fw-info-label">Build Command</span>
+                <code className="fw-info-value">{selectedMeta.buildCmd}</code>
+              </div>
+              <div className="framework-info-row">
+                <span className="fw-info-label">Output Directory</span>
+                <code className="fw-info-value">{selectedMeta.outputDir}</code>
+              </div>
+              <div className="framework-info-row">
+                <span className="fw-info-label">About</span>
+                <span className="fw-info-hint">{selectedMeta.hint}</span>
+              </div>
+            </div>
           </div>
 
+          {/* Framework Mismatch Warning */}
+          {showMismatch && detectedFramework && (
+            <div className="framework-mismatch-banner">
+              <div className="mismatch-icon-wrap">
+                <AlertTriangle size={18} />
+              </div>
+              <div className="mismatch-body">
+                <div className="mismatch-title">Framework Mismatch</div>
+                <div className="mismatch-desc">
+                  We detected <strong>{getFrameworkMeta(detectedFramework).label}</strong> from your repository's
+                  dependencies. Selecting a different framework may cause build failures.
+                </div>
+                <div className="mismatch-actions">
+                  <button type="button" className="btn-reset-fw" onClick={resetToDetected}>
+                    <RotateCcw size={12} />
+                    Reset to {getFrameworkMeta(detectedFramework).label}
+                  </button>
+                  <button type="button" className="btn-dismiss-fw" onClick={() => setShowMismatch(false)}>
+                    Continue anyway
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Advanced: Build & Output Override */}
           <button
             type="button"
             className="advanced-toggle"
@@ -231,7 +295,7 @@ export const ConfigureProject: React.FC<ConfigureProjectProps> = ({ repo, token,
             disabled={deploying}
           >
             {showAdvanced ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-            Build and Output Settings
+            Override Build &amp; Output Settings
           </button>
 
           {showAdvanced && (
@@ -259,12 +323,13 @@ export const ConfigureProject: React.FC<ConfigureProjectProps> = ({ repo, token,
             </div>
           )}
 
+          {/* Environment Variables */}
           <div className="form-group">
             <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <Shield size={14} />
               Environment Variables (Secrets)
             </label>
-            
+
             <div className="env-variable-builder">
               {envVars.map((env, idx) => (
                 <div key={idx} className="env-row">
@@ -289,14 +354,9 @@ export const ConfigureProject: React.FC<ConfigureProjectProps> = ({ repo, token,
                       type="button"
                       onClick={() => toggleEnvVisibility(idx)}
                       style={{
-                        position: 'absolute',
-                        right: '10px',
-                        top: '50%',
-                        transform: 'translateY(-50%)',
-                        background: 'transparent',
-                        border: 'none',
-                        color: 'var(--color-muted)',
-                        cursor: 'pointer'
+                        position: 'absolute', right: '10px', top: '50%',
+                        transform: 'translateY(-50%)', background: 'transparent',
+                        border: 'none', color: 'var(--color-muted)', cursor: 'pointer',
                       }}
                     >
                       {showEnvMap[idx] ? <EyeOff size={16} /> : <Eye size={16} />}
@@ -312,19 +372,15 @@ export const ConfigureProject: React.FC<ConfigureProjectProps> = ({ repo, token,
                   </button>
                 </div>
               ))}
-              
-              <button
-                type="button"
-                className="btn-add-env"
-                onClick={addEnvVar}
-                disabled={deploying}
-              >
+
+              <button type="button" className="btn-add-env" onClick={addEnvVar} disabled={deploying}>
                 <Plus size={14} />
                 Add Variable
               </button>
             </div>
           </div>
 
+          {/* Deploy Button */}
           <button
             type="submit"
             className="btn btn-github"
@@ -335,6 +391,7 @@ export const ConfigureProject: React.FC<ConfigureProjectProps> = ({ repo, token,
           </button>
         </form>
 
+        {/* Sidebar */}
         <div className="config-sidebar">
           <h3 className="sidebar-title">Import Details</h3>
           <div className="sidebar-meta-item">
@@ -355,6 +412,12 @@ export const ConfigureProject: React.FC<ConfigureProjectProps> = ({ repo, token,
             <div className="sidebar-meta-val">
               <GitBranch size={14} />
               {repo.default_branch}
+            </div>
+          </div>
+          <div className="sidebar-meta-item">
+            <div className="sidebar-meta-label">Project URL</div>
+            <div className="sidebar-meta-val" style={{ color: 'var(--accent-cyan)', fontFamily: 'monospace', fontSize: '11px', wordBreak: 'break-all' }}>
+              https://{projectName || 'your-name'}.pulse.jo3.org
             </div>
           </div>
         </div>
