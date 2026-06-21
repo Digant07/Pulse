@@ -55,7 +55,7 @@ export const BuildTerminal: React.FC<BuildTerminalProps> = ({ project, initialDe
       if (data.status) {
         setStatus(data.status);
         setDeployment(prev => ({ ...prev, status: data.status }));
-        
+
         // Trigger confetti on ready!
         if (data.status === 'READY') {
           triggerConfetti();
@@ -202,11 +202,11 @@ export const BuildTerminal: React.FC<BuildTerminalProps> = ({ project, initialDe
           <div className="deploy-subtitle">
             Source: <strong style={{ color: 'white' }}>{project.repository} ({project.branch})</strong>
           </div>
-          
+
           <div className="deployment-stepper">
             <div className="stepper-line" />
             <div className="stepper-progress" style={{ width: getStepperWidth() }} />
-            
+
             <div className={`step-node ${getStepStatusClass('QUEUED')}`}>
               <div className="step-circle">1</div>
               <span className="step-label">Queued</span>
@@ -240,7 +240,8 @@ export const BuildTerminal: React.FC<BuildTerminalProps> = ({ project, initialDe
                   if (response.ok) {
                     onBack();
                   } else {
-                    alert('Failed to delete project.');
+                    const data = await response.json();
+                    alert(`Failed to delete project: ${data.error || 'Unknown error'}`);
                   }
                 } catch (err) {
                   alert('Error deleting project.');
@@ -286,15 +287,15 @@ export const BuildTerminal: React.FC<BuildTerminalProps> = ({ project, initialDe
             className="terminal-badge"
             style={{
               backgroundColor: status === 'READY' ? 'rgba(0, 230, 118, 0.15)' :
-                               status === 'FAILED' ? 'rgba(255, 0, 80, 0.15)' :
-                               status === 'BUILDING' ? 'rgba(245, 166, 35, 0.15)' :
-                               status === 'DEPLOYING' ? 'rgba(0, 112, 243, 0.15)' :
-                               'rgba(255, 255, 255, 0.1)',
+                status === 'FAILED' ? 'rgba(255, 0, 80, 0.15)' :
+                  status === 'BUILDING' ? 'rgba(245, 166, 35, 0.15)' :
+                    status === 'DEPLOYING' ? 'rgba(0, 112, 243, 0.15)' :
+                      'rgba(255, 255, 255, 0.1)',
               color: status === 'READY' ? 'var(--status-ready)' :
-                     status === 'FAILED' ? 'var(--status-failed)' :
-                     status === 'BUILDING' ? 'var(--status-building)' :
-                     status === 'DEPLOYING' ? 'var(--status-deploying)' :
-                     'var(--color-secondary)'
+                status === 'FAILED' ? 'var(--status-failed)' :
+                  status === 'BUILDING' ? 'var(--status-building)' :
+                    status === 'DEPLOYING' ? 'var(--status-deploying)' :
+                      'var(--color-secondary)'
             }}
           >
             {status}

@@ -1,0 +1,37 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 18
+    commands:
+      - echo "Installing dependencies..."
+      # Send starting log & update status to BUILDING
+      - curl -X POST -H "Content-Type:application/json" -d "{\"status\":\"BUILDING\",\"log\":\"⏳ Installing project dependencies...\"}" "$callbackUrl"
+      - npm install
+  pre_build:
+    commands:
+      - echo "Pre-build phase..."
+  build:
+    commands:
+      - echo "Running build script..."
+      # Send compiling log & keep status as BUILDING
+      - curl -X POST -H "Content-Type:application/json" -d "{\"status\":\"BUILDING\",\"log\":\"⚙️ Compiling project source files...\"}" "$callbackUrl"
+      # If your project is static, the buildCommand from environment will run
+      # Otherwise, fallback to 'npm run build'
+      - if [ -n "$buildCommand" ]; then eval "$buildCommand"; else npm run build; fi
+  post_build:
+    commands:
+      - echo "Uploading build output to S3..."
+      # Send deploying log & update status to DEPLOYING
+      - curl -X POST -H "Content-Type:application/json" -d "{\"status\":\"DEPLOYING\",\"log\":\"📦 Uploading build artifacts to S3...\"}" "$callbackUrl"
+      
+      # ⚠️ IMPORTANT: Replace 'YOUR-S3-OUTPUT-BUCKET' with your real S3 bucket name (e.g. pulse-projects-bucket)
+      - aws s3 sync "${outputDirectory:-dist}" "s3://YOUR-S3-OUTPUT-BUCKET/$projectId/"
+      
+      - echo "Build and deploy completed successfully."
+      # Send final success log & status READY & the deployed URL
+      - |
+        curl -X POST -H "Content-Type:application/json" \
+          -d "{\"status\":\"READY\",\"deployedUrl\":\"https://$name.pulse.jo3.org\",\"log\":\"🎉 Deployment successfully completed! Live URL: https://$name.pulse.jo3.org\"}" \
+          "$callbackUrl"

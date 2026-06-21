@@ -49,9 +49,9 @@ function broadcastLog(id, line) {
   }
 }
 
-function broadcastStatus(id, status) {
+function broadcastStatus(id, status, extraData = {}) {
   if (activeListeners[id]) {
-    activeListeners[id].forEach(l => l.write(`data: ${JSON.stringify({ status })}\n\n`));
+    activeListeners[id].forEach(l => l.write(`data: ${JSON.stringify({ status, ...extraData })}\n\n`));
   }
 }
 
@@ -401,7 +401,7 @@ app.delete('/api/projects/:id', async (req, res) => {
     res.json({ success: true, message: 'Project and all deployments deleted.' });
   } catch (err) {
     console.error('Delete project error:', err.message);
-    res.status(500).json({ error: 'Failed to delete project.' });
+    res.status(500).json({ error: 'Failed to delete project: ' + err.message });
   }
 });
 
@@ -537,7 +537,7 @@ app.post('/api/deployments/:id/callback', async (req, res) => {
       }
     }
 
-    broadcastStatus(id, status);
+    broadcastStatus(id, status, deployedUrl ? { url: deployedUrl } : {});
 
     // Close SSE connections once build is terminal
     if (status === 'READY' || status === 'FAILED') {
