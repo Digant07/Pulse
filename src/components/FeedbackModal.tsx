@@ -62,7 +62,7 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose })
           <form onSubmit={handleSubmit}>
             <div className="modal-body">
               <div className="form-group">
-                <label className="form-label">How is your experience with Pluse?</label>
+                <label className="form-label">How is your experience with Pulse?</label>
                 <div className="emoji-rating-group">
                   {emojis.map((emoji, idx) => (
                     <button
@@ -135,9 +135,9 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose })
             <div className="success-icon-wrapper">
               <CheckCircle size={44} className="text-status-ready" />
             </div>
-            <h3>Thank You!</h3>
+            <h3>Thank You</h3>
             <p>
-              Your feedback has been recorded successfully. We appreciate your inputs to help make Pluse a better edge application deployment portal.
+              Your feedback has been recorded successfully. We appreciate your inputs to help make Pulse a better edge application deployment portal.
             </p>
             <button className="btn btn-github" style={{ marginTop: '16px' }} onClick={handleReset}>
               Return to App
