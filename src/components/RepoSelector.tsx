@@ -63,7 +63,7 @@ export const RepoSelector: React.FC<RepoSelectorProps> = ({ token, onBack, onSel
         <div>
           <h2 className="page-title">Import Git Repository</h2>
           <p style={{ color: 'var(--color-secondary)', fontSize: '14px', marginTop: '4px' }}>
-            Select a project repository to deploy it to Pluse.
+            Select a project repository to deploy it to Pulse.
           </p>
         </div>
       </div>
