@@ -171,7 +171,7 @@ function App() {
                 <svg viewBox="0 0 76 65" className="nav-logo-triangle" style={{ width: '20px', height: '20px', fill: 'white' }}>
                   <path d="M37.5273 0L75.0546 65H0L37.5273 0Z" />
                 </svg>
-                <span>PLUSE</span>
+                <span>PULSE</span>
               </div>
               <span className="nav-divider">/</span>
               <div className="nav-user-org">
@@ -283,7 +283,7 @@ function App() {
                   <div style={{ marginBottom: '12px' }}>
                     <div style={{ fontSize: '12px', color: 'var(--color-muted)', marginBottom: '6px' }}>Security Settings</div>
                     <div style={{ fontSize: '13px', color: 'var(--color-secondary)', marginBottom: '16px' }}>
-                      Revoke authorization token and sign out of the Pluse web application.
+                      Revoke authorization token and sign out of the Pulse web application.
                     </div>
                     <button className="btn btn-secondary" style={{ width: 'auto', padding: '10px 16px', borderColor: '#ff0050', color: '#ff0050', background: 'rgba(255,0,80,0.02)', fontWeight: 600 }} onClick={handleSignOut}>
                       Revoke GitHub Access
