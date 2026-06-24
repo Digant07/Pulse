@@ -467,6 +467,7 @@ async function triggerDeployment(project) {
     repository: project.repository,
     branch: project.branch,
     framework: project.framework,
+    installCmd: getInstallCommand(project.framework),
     buildCommand: project.buildCommand,
     outputDirectory: project.outputDirectory,
     env: project.env,
@@ -581,6 +582,13 @@ function getDefaultOutputDir(framework) {
     case 'gatsby':    return 'public';
     case 'remix':     return 'public';
     default:          return '.';
+  }
+}
+
+function getInstallCommand(framework) {
+  switch (framework) {
+    case 'static':    return 'echo "No install required for static site"';
+    default:          return 'npm install';
   }
 }
 
