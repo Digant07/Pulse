@@ -457,7 +457,7 @@ async function triggerDeployment(project) {
 
   console.log(`[Orchestrator] Invoking Lambda for project "${project.name}" (${deploymentId})`);
 
-  const queuedLog = `[${new Date().toISOString().split('T')[1].slice(0, -1)}] ⏳ Deployment queued. Waiting for AWS CodeBuild to pick up the job...`;
+  const queuedLog = `[${new Date().toISOString().split('T')[1].slice(0, -1)}] Deployment queued. Waiting for AWS CodeBuild to pick up the job...`;
   activeLogs[deploymentId].push(queuedLog);
 
   const payload = {
@@ -480,7 +480,7 @@ async function triggerDeployment(project) {
     timeout: 15000
   }).then(response => {
     console.log(`[Orchestrator] ✅ Lambda triggered. HTTP ${response.status}`);
-    const triggeredLog = `[${new Date().toISOString().split('T')[1].slice(0, -1)}] 🚀 Build job dispatched to AWS CodeBuild. Streaming real-time logs below...`;
+    const triggeredLog = `[${new Date().toISOString().split('T')[1].slice(0, -1)}] Build job dispatched to AWS CodeBuild. Streaming real-time logs below...`;
     activeLogs[deploymentId].push(triggeredLog);
     broadcastLog(deploymentId, triggeredLog);
   }).catch(async err => {
@@ -488,9 +488,9 @@ async function triggerDeployment(project) {
       ? `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}`
       : `No response received: ${err.message}`;
 
-    console.error(`[Orchestrator] ❌ Lambda call failed: ${errorMsg}`);
+    console.error(`[Orchestrator] Lambda call failed: ${errorMsg}`);
 
-    const failLog = `[${new Date().toISOString().split('T')[1].slice(0, -1)}] ❌ Failed to trigger build: ${errorMsg}`;
+    const failLog = `[${new Date().toISOString().split('T')[1].slice(0, -1)}] Failed to trigger build: ${errorMsg}`;
     activeLogs[deploymentId].push(failLog);
     broadcastLog(deploymentId, failLog);
     broadcastStatus(deploymentId, 'FAILED');
