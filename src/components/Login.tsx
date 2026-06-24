@@ -25,7 +25,7 @@ export const Login: React.FC = () => {
             <path d="M37.5273 0L75.0546 65H0L37.5273 0Z" fill="white" />
           </svg>
         </div>
-        <h2 className="login-card-title">Welcome to Pluse</h2>
+        <h2 className="login-card-title">Welcome to Pulse</h2>
         <p className="login-card-desc">Sign in to start creating and deploying web projects.</p>
 
         {error && (
