@@ -59,7 +59,7 @@ A sleek, intuitive dashboard for managing deployments:
 
 ## Demo Video
 
-[![Pulse Demo Video](https://i1.loom.com/share/33aca823f0d842ed821f7eba0bb3cc64)](https://www.loom.com/share/33aca823f0d842ed821f7eba0bb3cc64)
+https://github.com/user-attachments/assets/ed2c8b10-4c20-4eca-af13-70d54b08362d
 
 ## Getting Started
 
@@ -141,7 +141,7 @@ Set environment variables in the Pulse dashboard:
 
 ## Documentation
 
-For detailed documentation, visit: https://docs.pulse.jo3.org
+For detailed documentation, visit: https://.pulse.jo3.org/docs
 
 ## Contributing
 
