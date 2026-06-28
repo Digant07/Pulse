@@ -154,13 +154,12 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## Support
 
 Have questions or feedback?
-- Email: support@pulse.jo3.org
+- Email- Digant.malviya5@gmail.com
 - GitHub Issues: https://github.com/Digant07/Pulse/issues
-- Twitter: [@PulseIO](https://twitter.com)
 
 ## Built With
 
-- **AWS Serverless**: Lambda, S3, CloudFront
+- **AWS Serverless**: Lambda, S3, CloudFront, Codebuild
 - **React**: Modern UI framework
 - **GitHub API**: Seamless Git integration
 - **Tailwind CSS**: Beautiful styling
