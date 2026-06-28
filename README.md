@@ -59,12 +59,7 @@ A sleek, intuitive dashboard for managing deployments:
 
 ## Demo Video
 
-[Add your demo video here - you can embed a YouTube video or link to a Loom recording]
-
-```
-Example: https://www.youtube.com/watch?v=YOUR_VIDEO_ID
-or: https://loom.com/share/YOUR_VIDEO_ID
-```
+https://www.loom.com/share/33aca823f0d842ed821f7eba0bb3cc64
 
 ## Getting Started
 
