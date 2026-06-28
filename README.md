@@ -59,7 +59,7 @@ A sleek, intuitive dashboard for managing deployments:
 
 ## Demo Video
 
-https://www.loom.com/share/33aca823f0d842ed821f7eba0bb3cc64
+[![Pulse Demo Video](https://i1.loom.com/share/33aca823f0d842ed821f7eba0bb3cc64)](https://www.loom.com/share/33aca823f0d842ed821f7eba0bb3cc64)
 
 ## Getting Started
 
