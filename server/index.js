@@ -560,20 +560,36 @@ app.post('/api/deployments/:id/callback', async (req, res) => {
 // bake required env inline so they survive CodeBuild's per-phase shells:
 //  • CRA: CI=false (warnings ≠ errors) + openssl-legacy-provider (Node 17+)
 //  • Next: telemetry off + raised heap (large builds OOM on small instances)
+// Fail-fast deployability guard: a build that exits 0 but leaves nothing
+// servable used to be synced to S3 and reported READY, producing a bare
+// AccessDenied page (S3 has no index.html to serve → 403). Every build below
+// preserves the real build exit code, then verifies its output dir actually
+// contains an index.html. Next has bespoke logic — .next is server output and
+// can never be served from S3 static hosting.
 function getDefaultBuildCommand(framework) {
+  const runBuild = 'if [ -f pnpm-lock.yaml ]; then pnpm run build; elif [ -f yarn.lock ]; then yarn build; else npm run build; fi; BUILD_OK=$?; if [ $BUILD_OK -ne 0 ]; then echo "PULSE_GUARD: build command exited $BUILD_OK"; exit $BUILD_OK; fi';
+  const guardFile = (file) => `; if [ ! -f ${file} ]; then echo "PULSE_GUARD: ${file} missing after build — nothing servable to deploy. Failing instead of shipping a broken (AccessDenied) site."; exit 1; fi`;
+  const guardFind = (dir) => `; if ! find ${dir} -maxdepth 4 -name index.html 2>/dev/null | grep -q .; then echo "PULSE_GUARD: no index.html under ${dir}/ after build — nothing servable to deploy. Failing instead of shipping a broken (AccessDenied) site."; exit 1; fi`;
   switch (framework) {
-    case 'next':      return 'export NEXT_TELEMETRY_DISABLED=1; export NODE_OPTIONS="--max-old-space-size=3072"; if [ -f pnpm-lock.yaml ]; then pnpm run build; elif [ -f yarn.lock ]; then yarn build; else npm run build; fi';
-    case 'vite':      return 'if [ -f pnpm-lock.yaml ]; then pnpm run build; elif [ -f yarn.lock ]; then yarn build; else npm run build; fi';
+    case 'next':
+      return 'export NEXT_TELEMETRY_DISABLED=1; export NODE_OPTIONS="--max-old-space-size=3072"; '
+        + runBuild
+        + '; OUT_DIR="${OUTPUT_DIR:-.next}";'
+        + ' if [ "$OUT_DIR" = "out" ] || [ "$OUT_DIR" = "./out" ] || [ "$OUT_DIR" = "out/" ]; then'
+        + ' if [ ! -f out/index.html ]; then echo "PULSE_GUARD: out/index.html missing — Next.js static export produced no output. Is output: \'export\' set in next.config?"; exit 1; fi;'
+        + ' else if [ -f out/index.html ]; then echo "PULSE_GUARD: static export found in out/ but deploy directory is $OUT_DIR — set outputDirectory to out in project settings"; exit 1;'
+        + ' else echo "PULSE_GUARD: .next is Next.js server output and cannot be served from S3 static hosting (visitors get AccessDenied). Use output: \'export\' with outputDirectory out, or SSR hosting"; exit 1; fi; fi';
+    case 'vite':
+    case 'vue':
+    case 'astro':   return runBuild + guardFile('dist/index.html');
     case 'react-cra':
-    case 'react':     return 'export CI=false; export NODE_OPTIONS="--openssl-legacy-provider --max-old-space-size=3072"; if [ -f pnpm-lock.yaml ]; then pnpm run build; elif [ -f yarn.lock ]; then yarn build; else npm run build; fi';
-    case 'vue':       return 'npm run build';
-    case 'svelte':    return 'npm run build';
-    case 'angular':   return 'npm run build';
-    case 'astro':     return 'npm run build';
-    case 'nuxt':      return 'npm run build';
-    case 'gatsby':    return 'npm run build';
-    case 'remix':     return 'npm run build';
-    default:          return 'echo "Static build: No compilation required"';
+    case 'react':   return 'export CI=false; export NODE_OPTIONS="--openssl-legacy-provider --max-old-space-size=3072"; ' + runBuild + guardFile('build/index.html');
+    case 'svelte':  return runBuild + guardFile('build/index.html');
+    case 'angular': return runBuild + guardFind('dist');
+    case 'nuxt':    return runBuild + guardFile('.output/public/index.html');
+    case 'gatsby':
+    case 'remix':   return runBuild + guardFile('public/index.html');
+    default:        return 'echo "Static build: No compilation required"';
   }
 }
 
