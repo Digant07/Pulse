@@ -553,11 +553,19 @@ app.post('/api/deployments/:id/callback', async (req, res) => {
 });
 
 // ─── Framework Defaults ───────────────────────────────────────────────────────
+// Universal React/Next handling: install auto-detects the project's package
+// manager via lockfiles (yarn / pnpm / npm) so every React/Next repo builds
+// the way it does locally. npm paths use --legacy-peer-deps to tolerate stale
+// peer ranges (e.g. react-beautiful-dnd@13 + React 19 → ERESOLVE). Build cmds
+// bake required env inline so they survive CodeBuild's per-phase shells:
+//  • CRA: CI=false (warnings ≠ errors) + openssl-legacy-provider (Node 17+)
+//  • Next: telemetry off + raised heap (large builds OOM on small instances)
 function getDefaultBuildCommand(framework) {
   switch (framework) {
-    case 'next':      return 'npm run build';
-    case 'vite':      return 'npm run build';
-    case 'react-cra': return 'npm run build';
+    case 'next':      return 'export NEXT_TELEMETRY_DISABLED=1; export NODE_OPTIONS="--max-old-space-size=3072"; if [ -f pnpm-lock.yaml ]; then pnpm run build; elif [ -f yarn.lock ]; then yarn build; else npm run build; fi';
+    case 'vite':      return 'if [ -f pnpm-lock.yaml ]; then pnpm run build; elif [ -f yarn.lock ]; then yarn build; else npm run build; fi';
+    case 'react-cra':
+    case 'react':     return 'export CI=false; export NODE_OPTIONS="--openssl-legacy-provider --max-old-space-size=3072"; if [ -f pnpm-lock.yaml ]; then pnpm run build; elif [ -f yarn.lock ]; then yarn build; else npm run build; fi';
     case 'vue':       return 'npm run build';
     case 'svelte':    return 'npm run build';
     case 'angular':   return 'npm run build';
@@ -588,7 +596,9 @@ function getDefaultOutputDir(framework) {
 function getInstallCommand(framework) {
   switch (framework) {
     case 'static':    return 'echo "No install required for static site"';
-    default:          return 'npm install';
+    // Resilient universal install: honors the repo's own lockfile, tolerates
+    // stale peer ranges (e.g. react-beautiful-dnd@13 + React 19 → ERESOLVE).
+    default:          return 'if [ -f yarn.lock ]; then yarn install --frozen-lockfile --non-interactive || yarn install --non-interactive; elif [ -f pnpm-lock.yaml ]; then corepack enable >/dev/null 2>&1; pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile; elif [ -f package-lock.json ]; then npm ci --legacy-peer-deps --no-audit --no-fund || npm install --legacy-peer-deps --no-audit --no-fund; else npm install --legacy-peer-deps --no-audit --no-fund; fi';
   }
 }
 

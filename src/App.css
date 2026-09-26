@@ -1730,6 +1730,188 @@ body {
   background: rgba(0, 230, 118, 0.06);
 }
 
+.pro-badge {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--status-ready);
+  color: #000;
+}
+
+.alert-upgrade-link {
+  background: transparent;
+  border: none;
+  color: var(--color-secondary);
+  font-size: 12px;
+  margin-top: 10px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.alert-upgrade-link:hover {
+  color: var(--color-primary);
+}
+
+.btn-upgrade-stats:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Dummy Razorpay upgrade modal */
+.upgrade-modal {
+  max-width: 480px;
+}
+
+.rzp-test-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-secondary);
+  background: rgba(51, 149, 255, 0.08);
+  border: 1px solid rgba(51, 149, 255, 0.35);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+}
+
+.rzp-order-box {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+
+.rzp-merchant {
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  font-size: 13px;
+  color: var(--color-primary);
+}
+
+.rzp-order-id {
+  font-size: 11px;
+  color: var(--color-muted);
+  margin-top: 2px;
+}
+
+.rzp-amount {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--color-primary);
+}
+
+.rzp-amount span {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-muted);
+}
+
+.rzp-plan-row {
+  font-size: 12px;
+  color: var(--color-secondary);
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.rzp-plan-active {
+  background: rgba(0, 230, 118, 0.06);
+  border: 1px solid rgba(0, 230, 118, 0.3);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.rzp-method-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.rzp-method-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--color-secondary);
+  padding: 8px 6px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.rzp-method-tab.active {
+  border-color: #3395ff;
+  color: var(--color-primary);
+  background: rgba(51, 149, 255, 0.1);
+}
+
+.rzp-form-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rzp-input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--color-primary);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.rzp-input:focus {
+  border-color: #3395ff;
+}
+
+.rzp-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.rzp-hint {
+  font-size: 11px;
+  color: var(--color-muted);
+  margin: 2px 0 0 0;
+}
+
+.rzp-pay-btn {
+  background: #3395ff;
+  color: #fff;
+  border: 1px solid #3395ff;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.rzp-pay-btn:hover:not(:disabled) {
+  background: #2b86e6;
+}
+
+.rzp-pay-btn:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
 /* Project list on right */
 .vercel-projects-list {
   display: flex;

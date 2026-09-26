@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Search, Plus, ExternalLink, GitBranch, ShieldAlert, Sliders, Layout, CheckCircle, Clock, Share2, AlertTriangle, XCircle, Info, CheckCircle2, X } from 'lucide-react';
+import { UpgradeModal } from './UpgradeModal';
 
 interface Project {
   id: string;
@@ -245,6 +246,14 @@ function loadDismissed(): Record<string, number> {
 export const Dashboard: React.FC<DashboardProps> = ({ projects, onSelectProject, onNavigateToImport }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [dismissed, setDismissed] = useState<Record<string, number>>(loadDismissed);
+  const [showUpgrade, setShowUpgrade] = useState(false);
+  const [isPro, setIsPro] = useState(() => {
+    try {
+      return localStorage.getItem('pulse_pro_plan') !== null;
+    } catch {
+      return false;
+    }
+  });
 
   const usage = useMemo(() => computeUsage(projects), [projects]);
   const allAlerts = useMemo(() => detectAlerts(projects), [projects]);
@@ -401,7 +410,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ projects, onSelectProject,
                 ? 'No projects yet — import a repo to start tracking usage.'
                 : `${projects.length} project${projects.length === 1 ? '' : 's'} • ${healthyCount} healthy`}
             </div>
-            <button className="btn-upgrade-stats">Upgrade</button>
+            <button className="btn-upgrade-stats" onClick={() => setShowUpgrade(true)} disabled={isPro}>
+              {isPro ? 'Pro Active' : 'Upgrade'}
+            </button>
           </div>
 
           {/* Alerts Card — live anomaly detection */}
@@ -410,6 +421,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ projects, onSelectProject,
               <span className="card-title-text" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <ShieldAlert size={14} style={{ color: 'var(--color-secondary)' }} />
                 Alerts
+                {isPro && <span className="pro-badge">PRO</span>}
                 {visibleAlerts.length > 0 && (
                   <span
                     className={`alert-count-badge is-${visibleAlerts.some((a) => a.severity === 'critical') ? 'critical' : visibleAlerts.some((a) => a.severity === 'warning') ? 'warning' : 'info'}`}
@@ -444,6 +456,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ projects, onSelectProject,
                   ))}
                 </div>
                 {hiddenCount > 0 && <div className="alerts-more">+{hiddenCount} more issue{hiddenCount === 1 ? '' : 's'}</div>}
+                {!isPro && (
+                  <button className="btn-upgrade-pro" style={{ marginTop: '12px' }} onClick={() => setShowUpgrade(true)}>
+                    Upgrade to Pro
+                  </button>
+                )}
                 <div className="alerts-footnote">Pro adds Slack &amp; email notifications.</div>
               </div>
             ) : projects.length === 0 ? (
@@ -457,6 +474,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ projects, onSelectProject,
                 <h4 className="alert-prompt-title">No projects to monitor</h4>
                 <p className="alert-prompt-desc">Import a repo and Pulse will watch for failures and stuck builds.</p>
                 <button className="btn-upgrade-pro" onClick={onNavigateToImport}>Import project</button>
+                {!isPro && (
+                  <button className="alert-upgrade-link" onClick={() => setShowUpgrade(true)}>
+                    or Upgrade to Pro →
+                  </button>
+                )}
               </div>
             ) : (
               <div className="alerts-card-body">
@@ -465,6 +487,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ projects, onSelectProject,
                 </div>
                 <h4 className="alert-prompt-title">All systems normal</h4>
                 <p className="alert-prompt-desc">{projects.length} project{projects.length === 1 ? '' : 's'} healthy • checked just now</p>
+                {!isPro && (
+                  <button className="btn-upgrade-pro" style={{ marginTop: '12px' }} onClick={() => setShowUpgrade(true)}>
+                    Upgrade to Pro
+                  </button>
+                )}
                 <div className="alerts-footnote">Pro adds Slack &amp; email notifications.</div>
               </div>
             )}
@@ -570,6 +597,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ projects, onSelectProject,
           </div>
         </div>
       </div>
+      <UpgradeModal
+        isOpen={showUpgrade}
+        onClose={() => setShowUpgrade(false)}
+        onSuccess={() => setIsPro(true)}
+      />
     </div>
   );
 };
