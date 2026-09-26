@@ -1455,6 +1455,28 @@ body {
   transition: width 0.3s ease;
 }
 
+.progress-bar-fill.is-warning {
+  background: var(--status-building);
+}
+
+.progress-bar-fill.is-critical {
+  background: var(--status-failed);
+}
+
+.progress-val.is-warning {
+  color: var(--status-building);
+}
+
+.progress-val.is-critical {
+  color: var(--status-failed);
+}
+
+.usage-footnote {
+  font-size: 11px;
+  color: var(--color-muted);
+  margin-bottom: 14px;
+}
+
 .btn-upgrade-stats {
   background: transparent;
   border: 1px solid var(--border-subtle);
@@ -1529,6 +1551,183 @@ body {
 
 .btn-upgrade-pro:hover {
   background: #e4e4e7;
+}
+
+.alert-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff;
+  background: var(--accent-blue);
+}
+
+.alert-count-badge.is-critical {
+  background: var(--status-failed);
+}
+
+.alert-count-badge.is-warning {
+  background: var(--status-building);
+  color: #000;
+}
+
+.alert-count-badge.is-info {
+  background: var(--status-deploying);
+}
+
+.alerts-card-body.has-alerts {
+  align-items: stretch;
+  text-align: left;
+}
+
+.alerts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.alert-item {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-subtle);
+  font-size: 12px;
+  text-align: left;
+}
+
+.alert-item.is-critical {
+  border-color: rgba(255, 0, 80, 0.4);
+  background: rgba(255, 0, 80, 0.06);
+}
+
+.alert-item.is-warning {
+  border-color: rgba(245, 166, 35, 0.4);
+  background: rgba(245, 166, 35, 0.06);
+}
+
+.alert-item.is-info {
+  border-color: rgba(0, 112, 243, 0.4);
+  background: rgba(0, 112, 243, 0.06);
+}
+
+.alert-severity-dot {
+  flex-shrink: 0;
+  margin-top: 1px;
+  display: flex;
+}
+
+.alert-item.is-critical .alert-severity-dot {
+  color: var(--status-failed);
+}
+
+.alert-item.is-warning .alert-severity-dot {
+  color: var(--status-building);
+}
+
+.alert-item.is-info .alert-severity-dot {
+  color: var(--status-deploying);
+}
+
+.alert-item-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.alert-item-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.alert-item-desc {
+  font-size: 12px;
+  color: var(--color-secondary);
+  line-height: 1.4;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
+.alert-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.alert-view-btn {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--color-primary);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.alert-view-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--border-focus);
+}
+
+.alert-dismiss-btn {
+  background: transparent;
+  border: none;
+  color: var(--color-muted);
+  padding: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  transition: color 0.2s ease;
+}
+
+.alert-dismiss-btn:hover {
+  color: var(--color-primary);
+}
+
+.alert-dismiss-btn:focus-visible,
+.alert-view-btn:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+
+.alerts-more {
+  font-size: 11px;
+  color: var(--color-muted);
+  margin-top: 8px;
+}
+
+.alerts-footnote {
+  font-size: 11px;
+  color: var(--color-muted);
+  margin-top: 12px;
+  text-align: center;
+}
+
+.alerts-card-body.has-alerts .alerts-footnote {
+  text-align: left;
+}
+
+.alert-bell-circle.is-healthy {
+  color: var(--status-ready);
+  border-color: rgba(0, 230, 118, 0.4);
+  background: rgba(0, 230, 118, 0.06);
 }
 
 /* Project list on right */

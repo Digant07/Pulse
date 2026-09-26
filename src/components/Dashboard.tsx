@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Search, Plus, ExternalLink, GitBranch, ShieldAlert, Sliders, Layout, CheckCircle, Clock, Share2 } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Search, Plus, ExternalLink, GitBranch, ShieldAlert, Sliders, Layout, CheckCircle, Clock, Share2, AlertTriangle, XCircle, Info, CheckCircle2, X } from 'lucide-react';
 
 interface Project {
   id: string;
@@ -18,8 +18,261 @@ interface DashboardProps {
   onNavigateToImport: () => void;
 }
 
+// ─── Dynamic Usage engine (client-side, deterministic, no backend needed) ───
+interface UsageMetric {
+  used: number;
+  quota: number;
+  display: string;
+  pct: number;
+}
+
+interface Usage {
+  edgeRequests: UsageMetric;
+  dataTransfer: UsageMetric;
+  cpu: UsageMetric;
+  origin: UsageMetric;
+}
+
+const QUOTAS = {
+  EDGE_REQUESTS: 1_000_000,
+  DATA_BYTES: 100 * 1024 ** 3,
+  CPU_SECONDS: 3600,
+  ORIGIN_BYTES: 10 * 1024 ** 3,
+} as const;
+
+const FRAMEWORK_PROFILE: Record<string, { req: number; bytesPerReq: number; cpuMs: number; originMiss: number }> = {
+  next: { req: 1.4, bytesPerReq: 22 * 1024, cpuMs: 8, originMiss: 0.18 },
+  nuxt: { req: 1.35, bytesPerReq: 20 * 1024, cpuMs: 7, originMiss: 0.18 },
+  remix: { req: 1.3, bytesPerReq: 20 * 1024, cpuMs: 7, originMiss: 0.16 },
+  gatsby: { req: 1.15, bytesPerReq: 16 * 1024, cpuMs: 2, originMiss: 0.05 },
+  angular: { req: 1.1, bytesPerReq: 18 * 1024, cpuMs: 4, originMiss: 0.08 },
+  svelte: { req: 1.05, bytesPerReq: 14 * 1024, cpuMs: 2, originMiss: 0.05 },
+  vite: { req: 1.0, bytesPerReq: 14 * 1024, cpuMs: 1.5, originMiss: 0.03 },
+  'react-cra': { req: 0.95, bytesPerReq: 15 * 1024, cpuMs: 1.5, originMiss: 0.03 },
+  react: { req: 0.95, bytesPerReq: 15 * 1024, cpuMs: 1.5, originMiss: 0.03 },
+  vue: { req: 0.95, bytesPerReq: 13 * 1024, cpuMs: 1.5, originMiss: 0.03 },
+  astro: { req: 0.85, bytesPerReq: 10 * 1024, cpuMs: 1, originMiss: 0.02 },
+  static: { req: 0.6, bytesPerReq: 8 * 1024, cpuMs: 0.3, originMiss: 0 },
+};
+
+const STATUS_MULT: Record<string, number> = {
+  READY: 1,
+  DEPLOYING: 0.25,
+  BUILDING: 0.15,
+  QUEUED: 0.05,
+  FAILED: 0.08,
+};
+
+function hashString(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h;
+}
+
+function trim1(v: number): string {
+  if (v >= 100) return String(Math.round(v));
+  return String(Math.round(v * 10) / 10).replace(/\.0$/, '');
+}
+
+function formatCompact(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${trim1(n / 1000)}K`;
+  return `${trim1(n / 1_000_000)}M`;
+}
+
+function formatBytesUsed(b: number): string {
+  if (b <= 0) return '0';
+  if (b < 1024 ** 3) return `${trim1(b / 1024 ** 2)} MB`;
+  return `${(Math.round((b / 1024 ** 3) * 100) / 100).toFixed(2).replace(/\.?0+$/, '')} GB`;
+}
+
+function formatDuration(s: number): string {
+  if (s < 1) return '0s';
+  if (s < 60) return `${Math.round(s)}s`;
+  if (s < 3600) {
+    const m = Math.floor(s / 60);
+    const r = Math.round(s % 60);
+    return r ? `${m}m ${r}s` : `${m}m`;
+  }
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+function computeUsage(projects: Project[], now = Date.now()): Usage {
+  let req = 0;
+  let dataB = 0;
+  let cpuS = 0;
+  let originB = 0;
+
+  for (const p of projects) {
+    const prof = FRAMEWORK_PROFILE[p.framework] ?? FRAMEWORK_PROFILE.static;
+    const mult = STATUS_MULT[p.status] ?? 0.05;
+    const t = Date.parse(p.createdAt);
+    const ageDays = Number.isFinite(t) ? Math.min(Math.max((now - t) / 86_400_000, 0), 30) : 0;
+    const billableDays = Math.max(ageDays, p.status === 'READY' ? 1 : 0.25);
+    const jitter = hashString(p.id + p.name) % 120;
+    const daily = 180 * prof.req + jitter;
+    const selfTraffic = p.status === 'READY' ? 120 : 24;
+    const r = Math.round(daily * billableDays * mult + selfTraffic * mult);
+
+    req += r;
+    dataB += r * prof.bytesPerReq + (p.status === 'READY' ? 1.2 * 1024 ** 2 : 0);
+    cpuS += (r * prof.cpuMs) / 1000;
+    if (p.status === 'READY' || p.status === 'DEPLOYING') {
+      originB += r * prof.bytesPerReq * prof.originMiss;
+    }
+  }
+
+  req = Math.round(req);
+  dataB = Math.round(dataB);
+  originB = Math.round(originB);
+  cpuS = Math.round(cpuS * 10) / 10;
+  const pct = (u: number, q: number) => Math.min(100, q > 0 ? (u / q) * 100 : 0);
+
+  return {
+    edgeRequests: { used: req, quota: QUOTAS.EDGE_REQUESTS, display: `${formatCompact(req)} / 1M`, pct: pct(req, QUOTAS.EDGE_REQUESTS) },
+    dataTransfer: { used: dataB, quota: QUOTAS.DATA_BYTES, display: `${formatBytesUsed(dataB)} / 100 GB`, pct: pct(dataB, QUOTAS.DATA_BYTES) },
+    cpu: { used: cpuS, quota: QUOTAS.CPU_SECONDS, display: `${formatDuration(cpuS)} / 1h`, pct: pct(cpuS, QUOTAS.CPU_SECONDS) },
+    origin: { used: originB, quota: QUOTAS.ORIGIN_BYTES, display: `${formatBytesUsed(originB)} / 10 GB`, pct: pct(originB, QUOTAS.ORIGIN_BYTES) },
+  };
+}
+
+function barWidth(pct: number): string {
+  if (pct <= 0) return '0%';
+  return `${Math.max(pct, 0.05).toFixed(2)}%`;
+}
+
+function barState(pct: number): string {
+  if (pct >= 90) return 'is-critical';
+  if (pct >= 70) return 'is-warning';
+  return '';
+}
+
+// ─── Anomaly alerts engine (client-side, derived from project statuses) ───
+type AlertSeverity = 'critical' | 'warning' | 'info';
+
+interface AlertItem {
+  id: string;
+  severity: AlertSeverity;
+  title: string;
+  message: string;
+  projectId?: string;
+  timestamp: string;
+}
+
+const ALERT_THRESHOLDS = {
+  stuckBuildingMs: 15 * 60 * 1000,
+  stuckDeployingMs: 10 * 60 * 1000,
+  queuedWarningCount: 3,
+  maxVisible: 3,
+} as const;
+
+const DISMISSED_KEY = 'pulse_dismissed_alerts_v1';
+
+function detectAlerts(projects: Project[], now = Date.now()): AlertItem[] {
+  if (projects.length === 0) return [];
+  const alerts: AlertItem[] = [];
+  const ageOf = (p: Project) => now - new Date(p.createdAt).getTime();
+
+  for (const p of projects.filter((p) => p.status === 'FAILED')) {
+    alerts.push({
+      id: `failed:${p.id}`,
+      severity: 'critical',
+      title: `Build failed — ${p.name}`,
+      message: `${p.repository} needs attention. Check terminal logs.`,
+      projectId: p.id,
+      timestamp: p.createdAt,
+    });
+  }
+
+  for (const p of projects) {
+    if (p.status === 'BUILDING' && ageOf(p) > ALERT_THRESHOLDS.stuckBuildingMs) {
+      alerts.push({
+        id: `stuck:${p.id}`,
+        severity: 'warning',
+        title: `Stuck building — ${p.name}`,
+        message: `In BUILDING for ${Math.max(1, Math.round(ageOf(p) / 60000))}m (limit 15m).`,
+        projectId: p.id,
+        timestamp: p.createdAt,
+      });
+    }
+    if (p.status === 'DEPLOYING' && ageOf(p) > ALERT_THRESHOLDS.stuckDeployingMs) {
+      alerts.push({
+        id: `stuck:${p.id}`,
+        severity: 'warning',
+        title: `Stuck deploying — ${p.name}`,
+        message: `In DEPLOYING for ${Math.max(1, Math.round(ageOf(p) / 60000))}m (limit 10m).`,
+        projectId: p.id,
+        timestamp: p.createdAt,
+      });
+    }
+  }
+
+  const queued = projects.filter((p) => p.status === 'QUEUED');
+  if (queued.length >= ALERT_THRESHOLDS.queuedWarningCount) {
+    alerts.push({
+      id: 'queue-backlog',
+      severity: 'warning',
+      title: 'Build queue backing up',
+      message: `${queued.length} projects queued. Expect delays.`,
+      timestamp: new Date(now).toISOString(),
+    });
+  } else if (queued.length > 0) {
+    alerts.push({
+      id: 'queue-backlog',
+      severity: 'info',
+      title: `${queued.length} project(s) queued`,
+      message: 'Waiting for builder. No action needed.',
+      timestamp: new Date(now).toISOString(),
+    });
+  }
+
+  const rank: Record<AlertSeverity, number> = { critical: 0, warning: 1, info: 2 };
+  return alerts.sort(
+    (a, b) => rank[a.severity] - rank[b.severity] || +new Date(b.timestamp) - +new Date(a.timestamp)
+  );
+}
+
+function loadDismissed(): Record<string, number> {
+  try {
+    return JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? '{}') as Record<string, number>;
+  } catch {
+    return {};
+  }
+}
+
 export const Dashboard: React.FC<DashboardProps> = ({ projects, onSelectProject, onNavigateToImport }) => {
   const [searchQuery, setSearchQuery] = useState('');
+  const [dismissed, setDismissed] = useState<Record<string, number>>(loadDismissed);
+
+  const usage = useMemo(() => computeUsage(projects), [projects]);
+  const allAlerts = useMemo(() => detectAlerts(projects), [projects]);
+  const visibleAlerts = useMemo(
+    () => allAlerts.filter((a) => !(a.id in dismissed)),
+    [allAlerts, dismissed]
+  );
+  const shownAlerts = visibleAlerts.slice(0, ALERT_THRESHOLDS.maxVisible);
+  const hiddenCount = Math.max(0, visibleAlerts.length - shownAlerts.length);
+  const healthyCount = projects.filter((p) => p.status === 'READY').length;
+
+  const dismissAlert = (id: string) => {
+    setDismissed((prev) => {
+      const next = { ...prev, [id]: Date.now() };
+      try {
+        localStorage.setItem(DISMISSED_KEY, JSON.stringify(next));
+      } catch {
+        /* storage unavailable — keep in memory */
+      }
+      return next;
+    });
+  };
+
+  const alertIcon = (severity: AlertSeverity) => {
+    if (severity === 'critical') return <XCircle size={14} />;
+    if (severity === 'warning') return <AlertTriangle size={14} />;
+    return <Info size={14} />;
+  };
 
   const filteredProjects = projects.filter(p =>
     p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -94,77 +347,127 @@ export const Dashboard: React.FC<DashboardProps> = ({ projects, onSelectProject,
       <div className="dashboard-layout-grid">
         {/* Left Column - Usage & Alerts */}
         <div className="dashboard-left-col">
-          {/* Usage Card */}
+          {/* Usage Card — live, derived from real projects */}
           <div className="dashboard-stats-card">
             <div className="card-header-row">
               <span className="card-title-text">Usage</span>
               <span className="card-subtitle-small">Last 30 days</span>
             </div>
-            
+
             <div className="usage-progress-list">
               <div className="progress-item">
                 <div className="progress-labels">
                   <span className="progress-name">Edge Requests</span>
-                  <span className="progress-val">7.3K / 1M</span>
+                  <span className={`progress-val ${barState(usage.edgeRequests.pct)}`}>{usage.edgeRequests.display}</span>
                 </div>
                 <div className="progress-track-bg">
-                  <div className="progress-bar-fill" style={{ width: '0.73%' }}></div>
+                  <div className={`progress-bar-fill ${barState(usage.edgeRequests.pct)}`} style={{ width: barWidth(usage.edgeRequests.pct) }}></div>
                 </div>
               </div>
 
               <div className="progress-item">
                 <div className="progress-labels">
                   <span className="progress-name">Fast Data Transfer</span>
-                  <span className="progress-val">31.5 MB / 100 GB</span>
+                  <span className={`progress-val ${barState(usage.dataTransfer.pct)}`}>{usage.dataTransfer.display}</span>
                 </div>
                 <div className="progress-track-bg">
-                  <div className="progress-bar-fill" style={{ width: '0.03%' }}></div>
+                  <div className={`progress-bar-fill ${barState(usage.dataTransfer.pct)}`} style={{ width: barWidth(usage.dataTransfer.pct) }}></div>
                 </div>
               </div>
 
               <div className="progress-item">
                 <div className="progress-labels">
                   <span className="progress-name">Edge Request CPU Duration</span>
-                  <span className="progress-val">0s / 1h</span>
+                  <span className={`progress-val ${barState(usage.cpu.pct)}`}>{usage.cpu.display}</span>
                 </div>
                 <div className="progress-track-bg">
-                  <div className="progress-bar-fill" style={{ width: '0%' }}></div>
+                  <div className={`progress-bar-fill ${barState(usage.cpu.pct)}`} style={{ width: barWidth(usage.cpu.pct) }}></div>
                 </div>
               </div>
 
               <div className="progress-item">
                 <div className="progress-labels">
                   <span className="progress-name">Fast Origin Transfer</span>
-                  <span className="progress-val">0 / 10 GB</span>
+                  <span className={`progress-val ${barState(usage.origin.pct)}`}>{usage.origin.display}</span>
                 </div>
                 <div className="progress-track-bg">
-                  <div className="progress-bar-fill" style={{ width: '0%' }}></div>
+                  <div className={`progress-bar-fill ${barState(usage.origin.pct)}`} style={{ width: barWidth(usage.origin.pct) }}></div>
                 </div>
               </div>
             </div>
 
+            <div className="usage-footnote">
+              {projects.length === 0
+                ? 'No projects yet — import a repo to start tracking usage.'
+                : `${projects.length} project${projects.length === 1 ? '' : 's'} • ${healthyCount} healthy`}
+            </div>
             <button className="btn-upgrade-stats">Upgrade</button>
           </div>
 
-          {/* Alerts Card */}
+          {/* Alerts Card — live anomaly detection */}
           <div className="dashboard-stats-card alerts-card">
             <div className="card-header-row">
               <span className="card-title-text" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <ShieldAlert size={14} style={{ color: 'var(--color-secondary)' }} />
                 Alerts
+                {visibleAlerts.length > 0 && (
+                  <span
+                    className={`alert-count-badge is-${visibleAlerts.some((a) => a.severity === 'critical') ? 'critical' : visibleAlerts.some((a) => a.severity === 'warning') ? 'warning' : 'info'}`}
+                    aria-label={`${visibleAlerts.length} active alerts`}
+                  >
+                    {visibleAlerts.length > 9 ? '9+' : visibleAlerts.length}
+                  </span>
+                )}
               </span>
             </div>
-            <div className="alerts-card-body">
-              <div className="alert-bell-circle">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                  <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-                </svg>
+            {visibleAlerts.length > 0 ? (
+              <div className="alerts-card-body has-alerts" aria-live="polite">
+                <div className="alerts-list">
+                  {shownAlerts.map((alert) => (
+                    <div key={alert.id} className={`alert-item is-${alert.severity}`}>
+                      <span className="alert-severity-dot" aria-hidden="true">{alertIcon(alert.severity)}</span>
+                      <div className="alert-item-text">
+                        <div className="alert-item-title">{alert.title}</div>
+                        <div className="alert-item-desc">{alert.message}</div>
+                        <div className="alert-item-actions">
+                          {alert.projectId && (
+                            <button className="alert-view-btn" onClick={() => onSelectProject(alert.projectId!)}>
+                              View
+                            </button>
+                          )}
+                          <button className="alert-dismiss-btn" onClick={() => dismissAlert(alert.id)} aria-label={`Dismiss: ${alert.title}`}>
+                            <X size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {hiddenCount > 0 && <div className="alerts-more">+{hiddenCount} more issue{hiddenCount === 1 ? '' : 's'}</div>}
+                <div className="alerts-footnote">Pro adds Slack &amp; email notifications.</div>
               </div>
-              <h4 className="alert-prompt-title">Get alerted for anomalies</h4>
-              <p className="alert-prompt-desc">Automatically monitor your projects for anomalies and get notified.</p>
-              <button className="btn-upgrade-pro">Upgrade to Pro</button>
-            </div>
+            ) : projects.length === 0 ? (
+              <div className="alerts-card-body">
+                <div className="alert-bell-circle">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                    <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                  </svg>
+                </div>
+                <h4 className="alert-prompt-title">No projects to monitor</h4>
+                <p className="alert-prompt-desc">Import a repo and Pulse will watch for failures and stuck builds.</p>
+                <button className="btn-upgrade-pro" onClick={onNavigateToImport}>Import project</button>
+              </div>
+            ) : (
+              <div className="alerts-card-body">
+                <div className="alert-bell-circle is-healthy">
+                  <CheckCircle2 size={18} />
+                </div>
+                <h4 className="alert-prompt-title">All systems normal</h4>
+                <p className="alert-prompt-desc">{projects.length} project{projects.length === 1 ? '' : 's'} healthy • checked just now</p>
+                <div className="alerts-footnote">Pro adds Slack &amp; email notifications.</div>
+              </div>
+            )}
           </div>
         </div>
 
